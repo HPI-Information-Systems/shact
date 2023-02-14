@@ -39,27 +39,33 @@ class NERModel(pl.LightningModule):
         final_layer=hidden_states[-1]
         return final_layer,ls
 
-    def forward(self, x):
+    def forward(self, x, extra_clusters:List[List[Tuple]]=None):
+        """
+        x: dict of input ids, attention mask, token type ids, special tokens mask
+        extra_clusters: list of clusters to be added to the predicted clusters
+        returns: clusters, logits
+        clusters: list of clusters as (min,max) spans for each sentence
+        logits: logits for each cluster
+        """
         final,ls=self._encode(**x)
         clusters,logits=[],[]
+        sentence_masks=(x["attention_mask"]-x["special_tokens_mask"])
+        sentence_masks[sentence_masks<=0]=0
         for i,ls_vectors in enumerate(ls):
             input_ids=x["input_ids"][i]
-            sentence_mask=x["attention_mask"][i]*\
-                (torch.where(x["special_tokens_mask"][i] == 1, 0, 1))
+            #sentence_mask=x["attention_mask"][i]*\
+            #    (torch.where(x["special_tokens_mask"][i] == 1, 0, 1))
+            sentence_mask=sentence_masks[i]
             token_indices=torch.argwhere(sentence_mask).squeeze()
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
             predicted_clusters=compute_clusters(self.clustering_model.fit(token_ls_vectors))
+            all_clusters=predicted_clusters
+            if extra_clusters:
+                all_clusters.extend(extra_clusters[i])
             sentence_clusters=[]
             new_input_ids=[]
-            #for each cluster
-            #compute the indices of the tokens in the cluster
-            #rebuild the sentence containing the final layer vectors of the tokens in the cluster and the special tokens before and after the cluster
-            #encode the sentence with the special tokens
-            #classify the concatentation of the hidden states of the special tokens
-            #add the logits to the logits list
-            #add the cluster to the clusters list
             spans_set=set()
-            for cluster in predicted_clusters:
+            for cluster in all_clusters:
                 cluster_indices=token_indices[list(cluster)].cpu().numpy()
                 min=cluster_indices.min()
                 max=cluster_indices.max()
@@ -83,13 +89,6 @@ class NERModel(pl.LightningModule):
             vectors_class_concat_t=torch.stack(vectors_class_concat,dim=0)
             logit=self.fc_classif(vectors_class_concat_t)
             logits.append(logit)
-            
-            # min_idx=torch.argwhere(new_ids_t==dm.E_START_ID).item()
-            # max_idx=torch.argwhere(new_ids_t==dm.E_END_ID).item()
-            # encoded_sentence,_=self._encode(input_ids=new_ids_t.unsqueeze(0))
-            # vectors_class=torch.cat([encoded_sentence[:,min_idx],encoded_sentence[:,max_idx]],dim=-1)
-            # logit=self.fc_classif(vectors_class)
-        #logits.append(logit)
         return clusters,logits
 
     def training_step(self, batch, batch_idx):
