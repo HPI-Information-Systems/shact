@@ -49,6 +49,8 @@ class NERModel(pl.LightningModule):
             token_indices=torch.argwhere(sentence_mask).squeeze()
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
             predicted_clusters=compute_clusters(self.clustering_model.fit(token_ls_vectors))
+            sentence_clusters=[]
+            new_input_ids=[]
             #for each cluster
             #compute the indices of the tokens in the cluster
             #rebuild the sentence containing the final layer vectors of the tokens in the cluster and the special tokens before and after the cluster
@@ -56,23 +58,38 @@ class NERModel(pl.LightningModule):
             #classify the concatentation of the hidden states of the special tokens
             #add the logits to the logits list
             #add the cluster to the clusters list
+            spans_set=set()
             for cluster in predicted_clusters:
                 cluster_indices=token_indices[list(cluster)]
                 min=cluster_indices.min()
                 max=cluster_indices.max()
+                spans_set.add((min,max))
+            for (min,max) in spans_set:
                 new_ids=list(input_ids.cpu().numpy()[:min])+\
                     [dm.E_START_ID]+\
                     list(input_ids.cpu().numpy()[min:max+1])+\
                     [dm.E_END_ID]+\
                     list(input_ids.cpu().numpy()[max+1:])
-                new_ids_t=torch.tensor(new_ids).to(self.device)
-                min_idx=torch.argwhere(new_ids_t==dm.E_START_ID).item()
-                max_idx=torch.argwhere(new_ids_t==dm.E_END_ID).item()
-                encoded_sentence,_=self._encode(input_ids=new_ids_t.unsqueeze(0))
-                vectors_class=torch.cat([encoded_sentence[:,min_idx],encoded_sentence[:,max_idx]],dim=-1)
-                logit=self.fc_classif(vectors_class)
-                clusters.append(cluster_indices)
-                logits.append(logit)
+                sentence_clusters.append((min,max))
+                new_input_ids.append(new_ids)
+            clusters.append(sentence_clusters)
+            new_input_ids_t=torch.tensor(new_input_ids).to(self.device)
+            encoded_sentences,_=self._encode(input_ids=new_input_ids_t)
+            vectors_class_concat=[]
+            for (min,max),encoded_sentence in zip(sentence_clusters,encoded_sentences):#TODO optimize with tensor operations
+                vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
+                vectors_class_concat.append(vectors_class)
+
+            vectors_class_concat_t=torch.stack(vectors_class_concat,dim=0)
+            logit=self.fc_classif(vectors_class_concat_t)
+            logits.append(logit)
+            
+            # min_idx=torch.argwhere(new_ids_t==dm.E_START_ID).item()
+            # max_idx=torch.argwhere(new_ids_t==dm.E_END_ID).item()
+            # encoded_sentence,_=self._encode(input_ids=new_ids_t.unsqueeze(0))
+            # vectors_class=torch.cat([encoded_sentence[:,min_idx],encoded_sentence[:,max_idx]],dim=-1)
+            # logit=self.fc_classif(vectors_class)
+        #logits.append(logit)
         return clusters,logits
 
     def training_step(self, batch, batch_idx):
