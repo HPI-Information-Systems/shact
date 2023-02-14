@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Set, Tuple
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch
@@ -39,7 +39,7 @@ class NERModel(pl.LightningModule):
         final_layer=hidden_states[-1]
         return final_layer,ls
 
-    def forward(self, x, extra_clusters:List[List[Tuple]]=None):
+    def forward(self, x, extra_clusters:List[Tuple[int]]=None):
         """
         x: dict of input ids, attention mask, token type ids, special tokens mask
         extra_clusters: list of clusters to be added to the predicted clusters
@@ -57,17 +57,16 @@ class NERModel(pl.LightningModule):
             token_indices=torch.argwhere(sentence_mask).squeeze()
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
             predicted_clusters=compute_clusters(self.clustering_model.fit(token_ls_vectors))
-            all_clusters=predicted_clusters
-            if extra_clusters:
-                all_clusters.extend(extra_clusters[i])
             sentence_clusters=[]
             new_input_ids=[]
             spans_set=set()
-            for cluster in all_clusters:
+            for cluster in predicted_clusters:
                 cluster_indices=token_indices[list(cluster)].cpu().numpy()
                 min=cluster_indices.min()
                 max=cluster_indices.max()
                 spans_set.add((min,max))
+            if extra_clusters:
+                spans_set=spans_set.union(set(extra_clusters[i]))
             for (min,max) in spans_set:
                 new_ids=list(input_ids.cpu().numpy()[:min])+\
                     [dm.E_START_ID]+\
