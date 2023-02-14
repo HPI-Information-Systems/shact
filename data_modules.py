@@ -185,8 +185,12 @@ class HFNerIOBDataset(Dataset):
         raw_ne_masks_batch=[]
         max_num_masks=0
         ne_mask_padding=-1
+        all_word_ids=[]
         for ii,tags in enumerate(all_tags):
             words_ids=inputs.word_ids(ii)
+            #change None to -1
+            words_ids_pad=[-1 if x is None else x for x in words_ids]
+            all_word_ids.append(words_ids_pad)
             prev_word_id = None
             new_tags=[]
             prev_word_id = None
@@ -209,7 +213,8 @@ class HFNerIOBDataset(Dataset):
             raw_ne_masks=self._get_ne_masks(new_tags,inputs.attention_mask[ii],pad_value=ne_mask_padding)
             raw_ne_masks_batch.append(raw_ne_masks)
             max_num_masks=max(max_num_masks,len(raw_ne_masks))
-        
+        all_word_ids=torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)
+
         ne_masks=torch.full(size=(len(batch),max_num_masks,length),fill_value=ne_mask_padding,dtype=torch.short,device=inputs.input_ids.device)
         try:
             for ii,raw_ne_masks in enumerate(raw_ne_masks_batch):
@@ -222,7 +227,8 @@ class HFNerIOBDataset(Dataset):
         return {"ids":ids,
                 "inputs":inputs,
                 "labels":padded_tags,
-                "final_cluster_masks":ne_masks}
+                "final_cluster_masks":ne_masks,
+                "all_word_ids":all_word_ids}
 
     #function that checks if a list is a sublist of another list
     def _is_sublist(self,sublist,list):
@@ -279,9 +285,9 @@ if __name__=="__main__":
     tokenizer=AutoTokenizer.from_pretrained("bert-base-cased",use_fast=True)
     tokenizer.add_special_tokens({"additional_special_tokens":[E_START,E_END]})
     data=load_dataset("wnut_17")
-    dm=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=32)
+    dm=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
     dl=dm.train_dataloader()
     batch=iter(dl).next()
-    first_elem=batch[0]
-    print(first_elem)
+    #first_elem=batch[0]
+    #print(first_elem)
     print(batch)
