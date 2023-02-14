@@ -60,7 +60,7 @@ class NERModel(pl.LightningModule):
             #add the cluster to the clusters list
             spans_set=set()
             for cluster in predicted_clusters:
-                cluster_indices=token_indices[list(cluster)]
+                cluster_indices=token_indices[list(cluster)].cpu().numpy()
                 min=cluster_indices.min()
                 max=cluster_indices.max()
                 spans_set.add((min,max))
