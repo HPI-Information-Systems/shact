@@ -100,7 +100,7 @@ class HFNerIOBDataset(Dataset):
                 self.b_i_dict[b_index]=ii
                 self.i_b_dict[ii]=b_index
 
-    def _get_ne_masks(self,tags,sentence_mask,num_masks=None,pad_value=-1,only_multi_token_ne=True):
+    def _get_ne_masks(self,tags,sentence_mask,num_masks=None,pad_value=-1,only_multi_token_ne=False):
         """
         Generates masks for the sentence and tags one row for each named entity with 1s in the NE tokens and 0s in the rest of the sentence
         Padding is done with pad_value
@@ -177,7 +177,7 @@ class HFNerIOBDataset(Dataset):
             all_ids.append(int(example["id"]))
             all_tags.append(self._get_ner_tags(example["ner_tags"]))
 
-        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
         length=inputs.input_ids.shape[1]
         ids=torch.tensor(all_ids,dtype=torch.int,device=inputs.input_ids.device)
         pad_tags=-1
