@@ -16,7 +16,7 @@ import re
 
 #Pytorch lighning NER model with BERT as the underlying model
 class LSHAC_NERModel(pl.LightningModule):
-    def __init__(self,transformer_model:BertModel,classes:ClassLabel,lr=1e-3,ls_hidden_size=128,distance_fn:Callable=torch.cdist,affinity=None):
+    def __init__(self,transformer_model:BertModel,classes:ClassLabel,lr=1e-3,ls_hidden_size=128,distance_fn:Callable=torch.cdist,hac_metric=None):
         super().__init__()
         self.transformer_model=transformer_model
         self.orig_classes=classes
@@ -29,9 +29,9 @@ class LSHAC_NERModel(pl.LightningModule):
         self.ls_proj=nn.Linear(full_hidden_size,ls_hidden_size)
         self.lr=lr
         self.distance_fn=distance_fn
-        if (not affinity) and distance_fn==torch.cdist:
-            affinity="euclidean"
-        self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,affinity=affinity)
+        if (not hac_metric) and distance_fn==torch.cdist:
+            hac_metric="euclidean"
+        self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=hac_metric)
         self.loss_fn=nn.CrossEntropyLoss()
 
     def save_hyperparameters(self,**kwargs):
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     dm.include_special_tokens(model,tokenizer)
     data=load_dataset("wnut_17")
     data_module=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
-    ner_model=LSHAC_NERModel(model,classes=data_module.class_label_obj,lr=1e-3,ls_hidden_size=128,distance_fn=torch.cdist,affinity="euclidean")
+    ner_model=LSHAC_NERModel(model,classes=data_module.class_label_obj,lr=1e-3,ls_hidden_size=128,distance_fn=torch.cdist,hac_metric="euclidean")
     val_data=data_module.val_dataloader()
     batch=next(iter(val_data))
     ner_model.validation_step(batch,0)
