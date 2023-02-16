@@ -10,7 +10,7 @@ from transformers import BertModel
 from sklearn.cluster import AgglomerativeClustering
 from clustering_model import compute_clusters
 import data_modules as dm
-from utils import filter_kwargs
+from utils import filter_kwargs, connectivity_matrix
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import re
 
@@ -31,7 +31,7 @@ class LSHAC_NERModel(pl.LightningModule):
         self.distance_fn=distance_fn
         if (not hac_metric) and distance_fn==torch.cdist:
             hac_metric="euclidean"
-        self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=hac_metric)
+        self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=hac_metric, connectivity=connectivity_matrix)
         self.loss_fn=nn.CrossEntropyLoss()
 
     def save_hyperparameters(self,**kwargs):
