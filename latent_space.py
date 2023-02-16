@@ -18,7 +18,7 @@ def hac_sl_ratio_loss(distance_fn, vectors, token_mask,y):
     orig_shape=y.shape
     num_clusters=orig_shape[1]
     if num_clusters==0:
-        return None
+        return None,distances
     y=y.reshape(-1,y.shape[2]).float()#(bs*num_clusters,tokens)
     y=y.unsqueeze(1)#(bs*num_clusters,1,tokens)
     y_t=y.transpose(-2,-1)#(bs*num_clusters,tokens,1)
@@ -39,7 +39,7 @@ def hac_sl_ratio_loss(distance_fn, vectors, token_mask,y):
     ratio_mask=is_cluster
     sentence_loss=torch.sum(ratio*ratio_mask,dim=1)/torch.max(count_clusters,torch.ones_like(count_clusters))#(bs,)
     if torch.all(torch.isnan(sentence_loss)):
-        return None
+        return None,distances
     loss=torch.nanmean(sentence_loss)
     del masks
     del mask_mat
@@ -66,7 +66,7 @@ def hac_sl_ratio_loss_token_based(distance_fn, vectors, token_mask,y):
     orig_shape=y.shape
     num_clusters=orig_shape[1]
     if num_clusters==0:
-        return None
+        return None,distances
     y=y.reshape(-1,y.shape[2]).float()#(bs*num_clusters,tokens)
     y=y.unsqueeze(1)#(bs*num_clusters,1,tokens)
     y_t=y.transpose(-2,-1)#(bs*num_clusters,tokens,1)
@@ -89,7 +89,7 @@ def hac_sl_ratio_loss_token_based(distance_fn, vectors, token_mask,y):
     ratio_mask=is_cluster
     sentence_loss=torch.sum(ratio*ratio_mask,dim=1)/torch.max(count_clusters,torch.ones_like(count_clusters))#(bs,)
     if torch.all(torch.isnan(sentence_loss)):
-        return None
+        return None,distances
     loss=torch.nanmean(sentence_loss)
     del masks
     del mask_mat

@@ -80,7 +80,7 @@ class LSHAC_NERModel(pl.LightningModule):
         for i,ls_vectors in enumerate(ls):
             input_ids=x["input_ids"][i]
             sentence_mask=sentence_masks[i]
-            token_indices=torch.argwhere(sentence_mask).squeeze()
+            token_indices=torch.argwhere(sentence_mask).squeeze(-1)
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
             predicted_clusters=compute_clusters(self.clustering_model.fit(token_ls_vectors))
             sentence_clusters=[]
@@ -134,6 +134,8 @@ class LSHAC_NERModel(pl.LightningModule):
         clusters=x["final_cluster_masks"]
         clusters[clusters<=0]=0
         ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
+        if not ls_loss1:
+            return None
         ls_loss2,_ = hac_sl_ratio_loss_token_based(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
         return ls_loss1+ls_loss2
 
@@ -156,7 +158,7 @@ class LSHAC_NERModel(pl.LightningModule):
             gt_spans_sentence=[]
             gt_classes_sentence=[]
             for gt_cluster in gt_clusters:
-                indices=torch.argwhere(gt_cluster==1).squeeze()
+                indices=torch.argwhere(gt_cluster==1).squeeze(-1)
                 if indices.shape[0]==0:
                     continue
                 min=torch.min(indices).item()
@@ -182,20 +184,24 @@ class LSHAC_NERModel(pl.LightningModule):
                     gt_class=gt_classes_ohe[gt_spans.index(cluster)]
                     targets.append(gt_class)
                     #losses.append(self.class_criterion(logit,gt_class))
-            losses.append(self.class_criterion(torch.stack(loss_logits),torch.stack(targets)))
+            losses.append(self.class_criterion(torch.stack(loss_logits),torch.stack(targets).to(self.device)))
         class_loss=torch.stack(losses).mean()
         return class_loss,ls_loss
 
     def training_step(self, batch, batch_idx):
         class_loss,ls_loss=self.compute_losses(batch, batch_idx)
+        if ls_loss:
+            self.log("losses/train_ls_loss",ls_loss)
         self.log("losses/train_class_loss",class_loss)
-        self.log("losses/train_ls_loss",ls_loss)
-        return class_loss+ls_loss
+        loss=class_loss+ls_loss if ls_loss else class_loss
+        self.log("losses/train_loss",loss)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         class_loss,ls_loss=self.compute_losses(batch, batch_idx)
+        if ls_loss:
+            self.log("losses/val_ls_loss",ls_loss)
         self.log("losses/val_class_loss",class_loss)
-        self.log("losses/val_ls_loss",ls_loss)
         all_word_ids=batch["all_word_ids"]
         all_extra_spans=[]
         for i in range(len(all_word_ids)):
@@ -210,7 +216,9 @@ class LSHAC_NERModel(pl.LightningModule):
                 predicted_class=torch.argmax(logit)
                 predicted_spans.append((cluster,predicted_class))
             all_predicted_spans.append(predicted_spans)
-        return class_loss+ls_loss
+        loss=class_loss+ls_loss if ls_loss else class_loss
+        self.log("losses/val_loss",loss)
+        return loss
 
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
@@ -238,7 +246,7 @@ class LSHAC_NERModel(pl.LightningModule):
         """returns a list of spans derived from the clusters and individual words"""
         extra_spans=[]
         for cluster in clusters:
-            indx=torch.argwhere(cluster).squeeze()
+            indx=torch.argwhere(cluster).squeeze(-1)
             if indx.shape[0]==0:
                 continue
             min=int(indx.min())
@@ -246,7 +254,9 @@ class LSHAC_NERModel(pl.LightningModule):
             extra_spans.append((min,max))
         max_word_id=word_ids.max().item()
         for j in range(max_word_id):
-            indices=torch.argwhere(word_ids==j).squeeze()
+            indices=torch.argwhere(word_ids==j).squeeze(-1)
+            if indices.shape[0]==0:
+                continue
             min=indices.min().item()
             max=indices.max().item()
             extra_spans.append((min,max))
