@@ -2,7 +2,7 @@ import pytorch_lightning as pl
 import datasets
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
-from pytorch_lightning.loggers import TensorBoardLogger,WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 import torch
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
@@ -38,9 +38,11 @@ if __name__ == '__main__':
     parser.add_argument("--patience",  default=5, type=int, help="Patience for early stopping")
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
     parser.add_argument("--undersample_rate", type=float, help="Percentage of the training data to use")
+    parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(gpus=1,max_epochs=300)
     args = parser.parse_args()
+    pl.seed_everything(args.seed)
     logger=False
     if use_wandb:
         logger = WandbLogger(project=wandb_project,name=args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
@@ -64,7 +66,7 @@ if __name__ == '__main__':
     
     include_special_tokens(transformers_model,tokenizer)
 
-    trainer=pl.Trainer.from_argparse_args(args,logger=logger,callbacks=[early_stop, checkpoint_callback])
+    trainer=pl.Trainer.from_argparse_args(args,logger=logger,callbacks=[early_stop, checkpoint_callback],deterministic=True)
 
     hf_dataset=None
     if args.sub_dataset:
