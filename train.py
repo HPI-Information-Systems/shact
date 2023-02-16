@@ -44,7 +44,6 @@ if __name__ == '__main__':
     logger=False
     if use_wandb:
         logger = WandbLogger(project=wandb_project,name=args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
-        wandb.config.update(vars(args))
 
     lang_model_name=args.lang_model_name
     print("Using lang model",lang_model_name)
@@ -82,5 +81,6 @@ if __name__ == '__main__':
     
     if use_wandb:
         logger.watch(ner_model)
+        wandb.config.update(vars(args))
     
     trainer.fit(ner_model,train_dataloaders=dm.train_dataloader(),val_dataloaders=dm.val_dataloader())
