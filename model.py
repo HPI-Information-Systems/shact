@@ -12,11 +12,17 @@ from clustering_model import compute_clusters
 import data_modules as dm
 from utils import filter_kwargs, connectivity_matrix
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
-import re
+import utils
 
 #Pytorch lighning NER model with BERT as the underlying model
 class LSHAC_NERModel(pl.LightningModule):
-    def __init__(self,transformer_model:BertModel,classes:ClassLabel,lr=1e-3,ls_hidden_size=128,distance_fn:Callable=torch.cdist,hac_metric=None):
+    def __init__(self, transformer_model: BertModel,
+                 classes: ClassLabel,
+                 lr=1e-3,
+                 ls_hidden_size=128, 
+                 distance_fn: Callable = torch.cdist, 
+                 hac_metric=None,
+                 type_weights:Dict[str,float]=None,):
         super().__init__()
         self.transformer_model=transformer_model
         self.orig_classes=classes
@@ -32,7 +38,8 @@ class LSHAC_NERModel(pl.LightningModule):
         if (not hac_metric) and distance_fn==torch.cdist:
             hac_metric="euclidean"
         self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=hac_metric, connectivity=connectivity_matrix)
-        self.loss_fn=nn.CrossEntropyLoss()
+        weigths=self._align_weights(type_weights)
+        self.loss_fn=nn.CrossEntropyLoss(weight=weigths)          
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -47,7 +54,7 @@ class LSHAC_NERModel(pl.LightningModule):
         return final_layer,ls
 
     def _get_types_mapping(self,class_labels:ClassLabel)->Tuple[List[str],Dict[str,str]]:
-        regex=re.compile(r"[B,I]-(.*)")
+        regex=utils.regex_extract_type
         new_types=[]
         mapping={}
         for name in class_labels.names:
@@ -61,6 +68,15 @@ class LSHAC_NERModel(pl.LightningModule):
                 new_types.append(name)
                 mapping[name]=name
         return new_types,mapping
+
+    def _align_weights(self,type_weights:Dict[str,float]=None) -> Optional[torch.Tensor]:
+        if type_weights:
+            weights=torch.zeros(len(self.types))
+            for n,w in type_weights.items():
+                weights[self.types.index(n)]=w
+            return weights
+        else:
+            return None
 
     def _get_type_idx(self,class_label:int)->int:
         return self.types.index(self.class_type_mapping[self.orig_classes.names[class_label]])
@@ -119,6 +135,7 @@ class LSHAC_NERModel(pl.LightningModule):
         Computes the classification loss
         logits: logits for each cluster
         labels_ohe: labels in ground truth as one hot encoded vector
+        weights: weights for each class
         """
         loss=self.loss_fn(logits,labels_ohe) #F.cross_entropy(logits,labels_ohe)
         return loss
@@ -152,8 +169,8 @@ class LSHAC_NERModel(pl.LightningModule):
             all_extra_spans.append(extra_spans)
         ls_vectors,clusters,logits=self.forward(inputs,all_extra_spans)
         ls_loss=self.ls_loss(ls_vectors,batch)
-        gt_spans=[]
-        gt_classes_ohe=[]
+        gt_spans_batch=[]
+        gt_classes_ohe_batch=[]
         for gt_clusters,gt_labels in zip(batch["final_cluster_masks"],batch["labels"]):
             gt_spans_sentence=[]
             gt_classes_sentence=[]
@@ -168,12 +185,12 @@ class LSHAC_NERModel(pl.LightningModule):
                 classes_tensor_ohe=torch.zeros(len(self.types))
                 classes_tensor_ohe[label_type_idx]=1
                 gt_classes_sentence.append(classes_tensor_ohe)
-            gt_spans.append(gt_spans_sentence)
-            gt_classes_ohe.append(gt_classes_sentence)
+            gt_spans_batch.append(gt_spans_sentence)
+            gt_classes_ohe_batch.append(gt_classes_sentence)
         ohe_no_entity=torch.zeros(len(self.types))
         ohe_no_entity[self.types.index(self.class_type_mapping["O"])]=1
         losses=[]
-        for (sentence_clusters,cluster_logits) in zip(clusters,logits):
+        for (sentence_clusters,cluster_logits,gt_spans,gt_classes_ohe) in zip(clusters,logits,gt_spans_batch,gt_classes_ohe_batch):
             loss_logits=[]
             targets=[]
             for (cluster,logit) in zip(sentence_clusters,cluster_logits):

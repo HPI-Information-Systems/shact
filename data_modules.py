@@ -12,6 +12,7 @@ import random
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 import json
 from transformers import BertModel
+import utils
 
 E_START="[E_START]"
 E_END="[E_END]"
@@ -19,7 +20,7 @@ E_START_ID=None
 E_END_ID=None
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=True):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=False):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
@@ -54,6 +55,23 @@ class HFNer_DataModule(pl.LightningDataModule):
         dl,int2str=self._getloader(self.test_data,self.batch_size)
         self.int2str["test"]=int2str
         return dl
+
+    def estimate_type_frequency(self):
+        #estimate the frequency of each type from the training set
+        type_freq=dict()
+        for sentence in self.train_data:
+            for tag in sentence["ner_tags"]:
+                tag_str=self.class_label_obj.int2str(tag)
+                regex=utils.regex_extract_type
+                match=regex.match(tag_str)
+                type=tag_str
+                if match:
+                    type=match.group(1)
+                if type not in type_freq:
+                    type_freq[type]=1
+                else:
+                    type_freq[type]+=1
+        return type_freq
 
     def _getloader(self,data,batch_size):
         int2str=None

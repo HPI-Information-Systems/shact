@@ -1,6 +1,7 @@
 import inspect
 from typing import Callable, Dict
 import numpy as np
+import re
 
 def filter_kwargs(f:Callable, kwargs: Dict) -> Dict:
     argspec = inspect.getfullargspec(f)
@@ -21,3 +22,5 @@ def connectivity_matrix(vectors:np.ndarray) -> np.ndarray:
         if i+1<num_vectors:
             connectivity_m[i,i+1]=1
     return connectivity_m
+
+regex_extract_type=re.compile(r"[B,I]-(.*)")
