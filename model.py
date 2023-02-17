@@ -10,13 +10,12 @@ from transformers import BertModel
 from sklearn.cluster import AgglomerativeClustering
 from clustering_model import compute_clusters
 import data_modules as dm
-from utils import filter_kwargs, connectivity_matrix
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
 
 class LSHAC_NER_Prediction():
     #class with clusters and types for each cluster fro a single sentence
-    def __init__(self,clusters:List[Tuple[int,int]],logits:torch.Tensor,types_list:List[str],sentence_mask:torch.Tensor):
+    def __init__(self,clusters:List[Tuple[int,int]],logits:torch.Tensor,types_list:List[str],sentence_mask:torch.Tensor, word_ids:List[int]=None):
         assert len(sentence_mask.shape)==1, "sentence_mask must be a 1D tensor. results are designed for a single sentence"
         self.seq_length=sentence_mask.sum().item()
         self.sentence_mask=sentence_mask
@@ -29,11 +28,18 @@ class LSHAC_NER_Prediction():
             class_ix=torch.argmax(logit).item()
             if class_ix!=types_list.index("O"):
                 self.assignments.append((cluster,torch.argmax(logit).item()))
+        self.seq_labels=self._get_seq_labels()
+        self.seq_labels_compressed=None
+        if word_ids:
+            self.seq_labels_compressed=[]
+            for i,wid in enumerate(word_ids):
+                if wid>=0 and (i==0 or wid!=word_ids[i-1]):
+                    self.seq_labels_compressed.append(self.seq_labels[i])
 
     def __repr__(self):
         return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
     
-    def get_seq_labels(self) -> List[Tuple[Tuple[int,int],int]]:
+    def _get_seq_labels(self) -> List[Tuple[Tuple[int,int],int]]:
         seq_labels=[]
         is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
         #removes nested clusters. Keeps the bigger one
@@ -74,9 +80,9 @@ class LSHAC_NERModel(pl.LightningModule):
         self.ls_proj=nn.Linear(full_hidden_size,ls_hidden_size)
         self.lr=lr
         self.distance_fn=distance_fn
+        self.hac_metric=hac_metric
         if (not hac_metric) and distance_fn==torch.cdist:
-            hac_metric="euclidean"
-        self.clustering_model=AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=hac_metric, connectivity=connectivity_matrix)
+            self.hac_metric="euclidean"
         weigths=self._align_weights(type_weights)
         self.loss_fn=nn.CrossEntropyLoss(weight=weigths)          
 
@@ -86,7 +92,7 @@ class LSHAC_NERModel(pl.LightningModule):
 
     def _encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
         #encodes the input x using the transformer model
-        hidden_states=self.transformer_model(**filter_kwargs(self.transformer_model.forward,x),output_hidden_states=True).hidden_states
+        hidden_states=self.transformer_model(**utils.filter_kwargs(self.transformer_model.forward,x),output_hidden_states=True).hidden_states
         h=torch.cat(hidden_states,dim=-1)
         ls=self.ls_proj(h)
         final_layer=hidden_states[-1]
@@ -119,8 +125,13 @@ class LSHAC_NERModel(pl.LightningModule):
 
     def _get_type_idx(self,class_label:int)->int:
         return self.types.index(self.class_type_mapping[self.orig_classes.names[class_label]])
+    
+    def _get_clustering_model(self, word_ids):
+        #returns the clustering model for the given word ids
+        connectivity_matrix=utils.get_connectivity_matrix(word_ids)
+        return AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=self.hac_metric, connectivity=connectivity_matrix)
 
-    def forward(self, x, extra_clusters:List[Tuple[int]]=None):
+    def forward(self, x, word_ids, extra_clusters:List[Tuple[int]]=None) -> Tuple[torch.Tensor,List[Tuple[int,int]],List[torch.Tensor]]:
         """
         x: dict of input ids, attention mask, token type ids, special tokens mask
         extra_clusters: list of clusters to be added to the predicted clusters
@@ -137,7 +148,9 @@ class LSHAC_NERModel(pl.LightningModule):
             sentence_mask=sentence_masks[i]
             token_indices=torch.argwhere(sentence_mask).squeeze(-1)
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
-            predicted_clusters=compute_clusters(self.clustering_model.fit(token_ls_vectors))
+            projected_word_ids=word_ids[i][token_indices].detach().cpu().numpy().tolist()
+            clustering_model=self._get_clustering_model(projected_word_ids)
+            predicted_clusters=compute_clusters(clustering_model.fit(token_ls_vectors),projected_word_ids)
             sentence_clusters=[]
             new_input_ids=[]
             spans_set=set()
@@ -206,7 +219,7 @@ class LSHAC_NERModel(pl.LightningModule):
             word_ids=all_word_ids[i]
             extra_spans=self.get_extra_spans(gt_clusters,word_ids)
             all_extra_spans.append(extra_spans)
-        ls_vectors,clusters,logits=self.forward(inputs,all_extra_spans)
+        ls_vectors,clusters,logits=self.forward(inputs,all_word_ids,all_extra_spans)
         ls_loss=self.ls_loss(ls_vectors,batch)
         gt_spans_batch=[]
         gt_classes_ohe_batch=[]
@@ -273,20 +286,19 @@ class LSHAC_NERModel(pl.LightningModule):
             word_ids=all_word_ids[i]
             extra_spans=self.get_extra_spans([],word_ids)
             all_extra_spans.append(extra_spans)
-        _,clusters,logits=self.forward(batch["inputs"],all_extra_spans)
+        _,clusters,logits=self.forward(batch["inputs"],all_word_ids,all_extra_spans)
         return clusters,logits
     
     def predict(self, batch) -> List[LSHAC_NER_Prediction]:
         clusters,logits = self._predict_logits(batch)
         sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
+        all_word_ids=batch["all_word_ids"]
         predictions = []
-        for (sentence_clusters,cluster_logits,sentence_mask) in zip(clusters,logits,sentence_masks):
-            predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask))
-        tags=[]
-        for prediction in predictions:
-            tags.append(prediction.get_seq_labels())
-        return tags
+        for (sentence_clusters,cluster_logits,sentence_mask,word_ids_t) in zip(clusters,logits,sentence_masks,all_word_ids):
+            word_ids=word_ids_t[sentence_mask==1].tolist()
+            predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask,word_ids=word_ids))
+        return predictions
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
         return self.predict(batch)
