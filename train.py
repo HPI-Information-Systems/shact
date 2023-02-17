@@ -51,7 +51,7 @@ if __name__ == '__main__':
     lang_model_name=args.lang_model_name
     print("Using lang model",lang_model_name)
 
-    early_stop = EarlyStopping(monitor="losses/val_loss",mode="max",patience=args.patience)
+    early_stop = EarlyStopping(monitor="losses/val_loss",mode="min",patience=args.patience)
     checkpoint_callback = ModelCheckpoint(save_top_k=1, monitor="losses/val_loss", mode="min")
     
     config = AutoConfig.from_pretrained(lang_model_name, output_hidden_states=True, output_attentions=True, output_special_tokens=True)
