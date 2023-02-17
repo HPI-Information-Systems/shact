@@ -84,7 +84,8 @@ class LSHAC_NERModel(pl.LightningModule):
         if (not hac_metric) and distance_fn==torch.cdist:
             self.hac_metric="euclidean"
         weigths=self._align_weights(type_weights)
-        self.loss_fn=nn.CrossEntropyLoss(weight=weigths)          
+        self.loss_fn=nn.CrossEntropyLoss(weight=weigths)  
+        self.seqeval_metric=load_metric("seqeval")        
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -273,7 +274,29 @@ class LSHAC_NERModel(pl.LightningModule):
         self.log("losses/val_class_loss",class_loss)
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
-        predictions=self.predict(batch)
+        prediction_objs=self.predict(batch)
+        predictions=[obj.seq_labels for obj in prediction_objs]
+        gt=[]
+        labels=batch["labels"]
+        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
+        sentence_masks[sentence_masks<=0]=0
+        for i,(label_tensor,sentence_mask) in enumerate(zip(labels,sentence_masks)):
+            gt_sentence=[]
+            label_array=label_tensor[sentence_mask==1].tolist()
+            for label in label_array:
+                gt_sentence.append(self.orig_classes.int2str(label))
+            gt.append(gt_sentence)
+        res=self.seqeval_metric.compute(predictions=predictions, references=gt)
+        val_f1=res["overall_f1"]
+        self.log("metrics/val_f1",val_f1)
+        for k,v in res.items():
+            if type(v)==dict:
+                #per class performance
+                for k_,v_ in v.items():
+                    self.log(f"metrics/val_{k}_{k_}",float(v_))
+            else:
+                if k!="overall_f1" and type(v)==float or type(v)==int:
+                    self.log(f"metrics/val_{k}",float(v))
         return loss
     
     def _predict_logits(self, batch) -> Tuple[List[List[Tuple[int,int]]], List[torch.Tensor]]:
