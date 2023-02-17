@@ -5,13 +5,14 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 import numpy as np
-from datasets import ClassLabel, load_metric
+from datasets import ClassLabel
 from transformers import BertModel
 from sklearn.cluster import AgglomerativeClustering
 from clustering_model import compute_clusters
 import data_modules as dm
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
+import evaluate
 
 class LSHAC_NER_Prediction():
     #class with clusters and types for each cluster fro a single sentence
@@ -85,7 +86,7 @@ class LSHAC_NERModel(pl.LightningModule):
             self.hac_metric="euclidean"
         weigths=self._align_weights(type_weights)
         self.loss_fn=nn.CrossEntropyLoss(weight=weigths)  
-        self.seqeval_metric=load_metric("seqeval")        
+        self.seqeval_metric=evaluate.load("seqeval")#, zero_division=0)        
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -286,7 +287,7 @@ class LSHAC_NERModel(pl.LightningModule):
             for label in label_array:
                 gt_sentence.append(self.orig_classes.int2str(label))
             gt.append(gt_sentence)
-        res=self.seqeval_metric.compute(predictions=predictions, references=gt)
+        res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
         val_f1=res["overall_f1"]
         self.log("metrics/val_f1",val_f1)
         for k,v in res.items():

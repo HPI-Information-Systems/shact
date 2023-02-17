@@ -41,7 +41,7 @@ if __name__ == '__main__':
     parser.add_argument("--undersample_rate", type=float, help="Percentage of the training data to use")
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser = pl.Trainer.add_argparse_args(parser)
-    parser.set_defaults(gpus=1,max_epochs=300)
+    parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
     pl.seed_everything(args.seed)
     logger=False
