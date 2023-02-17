@@ -12,6 +12,7 @@ from data_modules import HFNer_DataModule, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
+from latent_space import cosine_distance
 
 def get_tag_format(hf_dataset):
     is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
@@ -80,7 +81,7 @@ if __name__ == '__main__':
     sum_freq=sum(type_freq.values())
     type_weigths={k:sum_freq-v for k,v in type_freq.items()}
     #model=LSHAC_NERModel(transformers_model,num_labels=dm.num_classes,int2str_fn=dm.int2str["train"],lr=args.lr)
-    ner_model=LSHAC_NERModel(transformers_model,classes=dm.class_label_obj,lr=1e-3,ls_hidden_size=128,distance_fn=torch.cdist,hac_metric="euclidean",type_weights=type_weigths)
+    ner_model=LSHAC_NERModel(transformers_model,classes=dm.class_label_obj,lr=args.lr,ls_hidden_size=128,distance_fn=cosine_distance,hac_metric="cosine",type_weights=type_weigths)
     
     assert ner_model is not None
     
