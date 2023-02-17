@@ -40,6 +40,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
     parser.add_argument("--undersample_rate", type=float, help="Percentage of the training data to use")
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
+    parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
@@ -76,7 +77,7 @@ if __name__ == '__main__':
         hf_dataset=load_dataset(args.dataset)            
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
-    dm=HFNer_DataModule(hf_dataset,tokenizer=tokenizer,batch_size=args.batch_size,tag_format=get_tag_format(hf_dataset),undersample_rate=args.undersample_rate,only_with_mw_nes=False)
+    dm=HFNer_DataModule(hf_dataset,tokenizer=tokenizer,batch_size=args.batch_size,num_workers=args.workers,tag_format=get_tag_format(hf_dataset),undersample_rate=args.undersample_rate,only_with_mw_nes=False)
     type_freq=dm.estimate_type_frequency()
     sum_freq=sum(type_freq.values())
     type_weigths={k:sum_freq-v for k,v in type_freq.items()}
