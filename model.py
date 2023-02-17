@@ -14,6 +14,45 @@ from utils import filter_kwargs, connectivity_matrix
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
 
+class LSHAC_NER_Prediction():
+    #class with clusters and types for each cluster fro a single sentence
+    def __init__(self,clusters:List[Tuple[int,int]],logits:torch.Tensor,types_list:List[str],sentence_mask:torch.Tensor):
+        assert len(sentence_mask.shape)==1, "sentence_mask must be a 1D tensor. results are designed for a single sentence"
+        self.seq_length=sentence_mask.sum().item()
+        self.sentence_mask=sentence_mask
+        self.clusters=clusters
+        self.logits=logits
+        assert len(clusters)==len(logits)
+        self.types_list=types_list
+        self.assignments=[]
+        for cluster,logit in zip(clusters,logits):
+            class_ix=torch.argmax(logit).item()
+            if class_ix!=types_list.index("O"):
+                self.assignments.append((cluster,torch.argmax(logit).item()))
+
+    def __repr__(self):
+        return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
+    
+    def get_seq_labels(self) -> List[Tuple[Tuple[int,int],int]]:
+        seq_labels=[]
+        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
+        #removes nested clusters. Keeps the bigger one
+        pruned_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
+        for i in range(self.sentence_mask.shape[0]):
+            if self.sentence_mask[i]!=1:
+                continue
+            containing_clusters=[(c,a) for (c,a) in pruned_assignments if i in range(c[0],c[1]+1)]
+            cluster,assignment=(containing_clusters[0][0],containing_clusters[0][1]) if len(containing_clusters)>0 else (None,None)
+            if cluster:
+                if i==cluster[0]:
+                    seq_labels.append("B-"+self.types_list[assignment])
+                else:
+                    seq_labels.append("I-"+self.types_list[assignment])
+            else:
+                seq_labels.append("O")
+        assert len(seq_labels)==self.seq_length
+        return seq_labels
+
 #Pytorch lighning NER model with BERT as the underlying model
 class LSHAC_NERModel(pl.LightningModule):
     def __init__(self, transformer_model: BertModel,
@@ -219,26 +258,15 @@ class LSHAC_NERModel(pl.LightningModule):
         if ls_loss:
             self.log("losses/val_ls_loss",ls_loss)
         self.log("losses/val_class_loss",class_loss)
-        all_word_ids=batch["all_word_ids"]
-        all_extra_spans=[]
-        for i in range(len(all_word_ids)):
-            word_ids=all_word_ids[i]
-            extra_spans=self.get_extra_spans([],word_ids)
-            all_extra_spans.append(extra_spans)
-        _,clusters,logits=self.forward(batch["inputs"],all_extra_spans)
-        all_predicted_spans=[]
-        for (sentence_clusters,cluster_logits) in zip(clusters,logits):
-            predicted_spans=[]
-            for (cluster,logit) in zip(sentence_clusters,cluster_logits):
-                predicted_class=torch.argmax(logit)
-                predicted_spans.append((cluster,predicted_class))
-            all_predicted_spans.append(predicted_spans)
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
+        predictions=self.predict(batch)
         return loss
-
-
-    def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
+    
+    def _predict_logits(self, batch) -> Tuple[List[List[Tuple[int,int]]], List[torch.Tensor]]:
+        """
+        Adds single word clusters and assigns logits for each cluster
+        """
         all_word_ids=batch["all_word_ids"]
         all_extra_spans=[]
         for i in range(len(all_word_ids)):
@@ -246,14 +274,22 @@ class LSHAC_NERModel(pl.LightningModule):
             extra_spans=self.get_extra_spans([],word_ids)
             all_extra_spans.append(extra_spans)
         _,clusters,logits=self.forward(batch["inputs"],all_extra_spans)
-        all_predicted_spans=[]
-        for (sentence_clusters,cluster_logits) in zip(clusters,logits):
-            predicted_spans=[]
-            for (cluster,logit) in zip(sentence_clusters,cluster_logits):
-                predicted_class=torch.argmax(logit)
-                predicted_spans.append((cluster,predicted_class))
-            all_predicted_spans.append(predicted_spans)
-        return all_predicted_spans
+        return clusters,logits
+    
+    def predict(self, batch) -> List[LSHAC_NER_Prediction]:
+        clusters,logits = self._predict_logits(batch)
+        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
+        sentence_masks[sentence_masks<=0]=0
+        predictions = []
+        for (sentence_clusters,cluster_logits,sentence_mask) in zip(clusters,logits,sentence_masks):
+            predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask))
+        tags=[]
+        for prediction in predictions:
+            tags.append(prediction.get_seq_labels())
+        return tags
+
+    def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
+        return self.predict(batch)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -278,6 +314,7 @@ class LSHAC_NERModel(pl.LightningModule):
             max=indices.max().item()
             extra_spans.append((min,max))
         return extra_spans
+    
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer
