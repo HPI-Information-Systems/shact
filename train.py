@@ -90,4 +90,5 @@ if __name__ == '__main__':
         logger.watch(ner_model)
         wandb.config.update(vars(args))
     
+    #trainer.validate(ner_model,dataloaders=dm.val_dataloader())
     trainer.fit(ner_model,train_dataloaders=dm.train_dataloader(),val_dataloaders=dm.val_dataloader())

@@ -86,7 +86,13 @@ class LSHAC_NERModel(pl.LightningModule):
             self.hac_metric="euclidean"
         weigths=self._align_weights(type_weights)
         self.loss_fn=nn.CrossEntropyLoss(weight=weigths)  
-        self.seqeval_metric=evaluate.load("seqeval")#, zero_division=0)        
+        self.experiment_id=None
+        try:
+            self.experiment_id=self.logger.experiment.path
+        except:
+            #random id
+            self.experiment_id=str(np.random.randint(1000000))
+        self.seqeval_metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -287,6 +293,7 @@ class LSHAC_NERModel(pl.LightningModule):
             for label in label_array:
                 gt_sentence.append(self.orig_classes.int2str(label))
             gt.append(gt_sentence)
+        
         res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
         val_f1=res["overall_f1"]
         self.log("metrics/val_f1",val_f1)
