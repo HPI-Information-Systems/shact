@@ -101,7 +101,7 @@ class LSHAC_NERModel(pl.LightningModule):
     def _encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
         #encodes the input x using the transformer model
         hidden_states=self.transformer_model(**utils.filter_kwargs(self.transformer_model.forward,x),output_hidden_states=True).hidden_states
-        h=torch.cat(hidden_states,dim=-1)
+        h=torch.cat(hidden_states,dim=-1).detach()
         ls=self.ls_proj(h)
         final_layer=hidden_states[-1]
         return final_layer,ls
