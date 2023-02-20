@@ -41,6 +41,7 @@ if __name__ == '__main__':
     parser.add_argument("--undersample_rate", type=float, help="Percentage of the training data to use")
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
+    parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
@@ -81,9 +82,11 @@ if __name__ == '__main__':
     type_freq=dm.estimate_type_frequency()
     sum_freq=sum(type_freq.values())
     type_weigths={k:sum_freq-v for k,v in type_freq.items()}
-    #model=LSHAC_NERModel(transformers_model,num_labels=dm.num_classes,int2str_fn=dm.int2str["train"],lr=args.lr)
-    ner_model=LSHAC_NERModel(transformers_model,classes=dm.class_label_obj,lr=args.lr,ls_hidden_size=128,distance_fn=cosine_distance,hac_metric="cosine",type_weights=type_weigths)
-    
+    distance_fn=cosine_distance if args.distance=="cosine" else torch.cdist
+    hac_metric="cosine" if args.distance=="cosine" else "euclidean"
+    ner_model = LSHAC_NERModel(transformers_model, classes=dm.class_label_obj, lr=args.lr,
+                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, type_weights=type_weigths)
+
     assert ner_model is not None
     
     if use_wandb:
