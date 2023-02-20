@@ -2,6 +2,7 @@ import inspect
 from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 import re
+import torch
 
 def filter_kwargs(f:Callable, kwargs: Dict) -> Dict:
     argspec = inspect.getfullargspec(f)
@@ -45,5 +46,33 @@ def get_connectivity_matrix(word_ids:List[int]) -> np.ndarray:
         #             ii+=1
         #         connectivity_m[i,ii]=1
     return connectivity_m
+
+def get_potential_recall(clusters:List[List[Tuple[int,int]]], batch:Dict) -> Dict[int,float]:
+    """
+    Computes the potential recall of the clusters in the batch
+    :param clusters: List of tuples (start, end) of the clusters reuslting from HAC
+    :param batch: Dictionary with keys "all_word_ids", "final_cluster_masks", "labels" and "inputs"
+    """
+    results={}
+    found={}
+    total={}
+    for gt_clusters,gt_labels,hac_clusters in zip(batch["final_cluster_masks"],batch["labels"],clusters):
+        for gt_cluster in gt_clusters:
+            indices=torch.argwhere(gt_cluster==1).squeeze(-1)
+            if indices.shape[0]==0:
+                continue
+            min=torch.min(indices).item()
+            max=torch.max(indices).item()
+            label_type_idx=gt_labels[min].item()
+            if total.get(label_type_idx) is None:
+                total[label_type_idx]=0
+                found[label_type_idx]=0
+            total[label_type_idx]+=1
+            if (min,max) in hac_clusters:
+                found[label_type_idx]+=1
+    for label_type_idx in total.keys():
+        results[label_type_idx]=found[label_type_idx]/total[label_type_idx]
+    return results
+    
 
 regex_extract_type=re.compile(r"[B,I]-(.*)")

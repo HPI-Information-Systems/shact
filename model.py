@@ -32,6 +32,8 @@ class LSHAC_NER_Prediction():
         self.seq_labels=self._get_seq_labels()
         self.seq_labels_compressed=None
         if word_ids:
+            # if word_ids are provided, we compress the labels to remove the partial word token labels
+            # we asume the first token of a word is the one with the label
             self.seq_labels_compressed=[]
             for i,wid in enumerate(word_ids):
                 if wid>=0 and (i==0 or wid!=word_ids[i-1]):
@@ -282,6 +284,10 @@ class LSHAC_NERModel(pl.LightningModule):
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
         prediction_objs=self.predict(batch)
+        potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
+        for k,v in potential_recall.items():
+            class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
+            self.log(f"metrics/val_{class_name}_potential_recall",v)
         predictions=[obj.seq_labels for obj in prediction_objs]
         gt=[]
         labels=batch["labels"]
