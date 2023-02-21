@@ -100,13 +100,18 @@ class LSHAC_NERModel(pl.LightningModule):
         kwargs.setdefault("ignore",[]).append("transformer_model")
         super().save_hyperparameters(**kwargs)
 
-    def _encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
+    def _full_encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
         #encodes the input x using the transformer model
         hidden_states=self.transformer_model(**utils.filter_kwargs(self.transformer_model.forward,x),output_hidden_states=True).hidden_states
-        h=torch.cat(hidden_states,dim=-1).detach()
+        h=torch.cat(hidden_states,dim=-1)
         ls=self.ls_proj(h)
         final_layer=hidden_states[-1]
         return final_layer,ls
+    
+    def _encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
+        #encodes the input x using the transformer model
+        rep=self.transformer_model(**utils.filter_kwargs(self.transformer_model.forward,x),output_hidden_states=False).last_hidden_state
+        return rep
 
     def _get_types_mapping(self,class_labels:ClassLabel)->Tuple[List[str],Dict[str,str]]:
         regex=utils.regex_extract_type
@@ -149,7 +154,7 @@ class LSHAC_NERModel(pl.LightningModule):
         clusters: list of clusters as (min,max) spans for each sentence
         logits: logits for each cluster
         """
-        final,ls=self._encode(**x)
+        _,ls=self._full_encode(**x)
         clusters,logits=[],[]
         sentence_masks=(x["attention_mask"]-x["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
@@ -181,7 +186,7 @@ class LSHAC_NERModel(pl.LightningModule):
                 new_input_ids.append(new_ids)
             clusters.append(sentence_clusters)
             new_input_ids_t=torch.tensor(new_input_ids).to(self.device)
-            encoded_sentences,_=self._encode(input_ids=new_input_ids_t)
+            encoded_sentences=self._encode(input_ids=new_input_ids_t)
             vectors_class_concat=[]
             for (min,max),encoded_sentence in zip(sentence_clusters,encoded_sentences):#TODO optimize with tensor operations
                 vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
