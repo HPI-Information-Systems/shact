@@ -186,7 +186,8 @@ class LSHAC_NERModel(pl.LightningModule):
                 new_input_ids.append(new_ids)
             clusters.append(sentence_clusters)
             new_input_ids_t=torch.tensor(new_input_ids).to(self.device)
-            encoded_sentences=self._encode(input_ids=new_input_ids_t)
+            attention_mask_t=torch.where(new_input_ids_t!=0,1,0).to(self.device)
+            encoded_sentences=self._encode(input_ids=new_input_ids_t,attention_mask=attention_mask_t)
             vectors_class_concat=[]
             for (min,max),encoded_sentence in zip(sentence_clusters,encoded_sentences):#TODO optimize with tensor operations
                 vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
