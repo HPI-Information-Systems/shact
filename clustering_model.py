@@ -1,7 +1,22 @@
-from typing import List, Set
+from typing import List, Set, Tuple
 import typing
 from sklearn.cluster import AgglomerativeClustering
 from numpy import ndarray as np_arr
+import numpy as np
+
+def get_word_spans(word_ids:List[int]) -> List[Set[int]]:
+    """returns a list of spans derived from the words ids"""
+    extra_spans=[]
+    word_ids_np=np.array(word_ids)
+    max_word_id=word_ids_np.max()
+    for j in range(max_word_id):
+        indices=np.argwhere(word_ids_np==j).squeeze(-1)
+        if indices.shape[0]==0:
+            continue
+        min=indices.min().item()
+        max=indices.max().item()
+        extra_spans.append(set(range(min,max+1)))
+    return extra_spans
 
 def compute_clusters(clust_model:AgglomerativeClustering, word_ids:List[int])->List[Set[int]]:
     """
@@ -22,6 +37,10 @@ def compute_clusters(clust_model:AgglomerativeClustering, word_ids:List[int])->L
         if len(cluster_set)<len_tokens:#ignore complete set
             predicted_clusters.append(cluster_set)
     predicted_clusters=[c for c in predicted_clusters if not broken_word(word_ids, c)]
+    word_spans=get_word_spans(word_ids)
+    for word_span in word_spans:
+        if word_span not in predicted_clusters:
+            predicted_clusters.append(word_span)
     return predicted_clusters
 
 def broken_word(word_ids:List[int], cluster:Set[int])->bool:

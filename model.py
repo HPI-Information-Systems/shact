@@ -13,6 +13,7 @@ import data_modules as dm
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
 import evaluate
+import random
 
 class LSHAC_NER_Prediction():
     #class with clusters and types for each cluster fro a single sentence
@@ -87,7 +88,7 @@ class LSHAC_NERModel(pl.LightningModule):
         if (not hac_metric) and distance_fn==torch.cdist:
             self.hac_metric="euclidean"
         weigths=self._align_weights(type_weights)
-        self.loss_fn=nn.CrossEntropyLoss(weight=weigths)  
+        self.loss_fn=nn.CrossEntropyLoss(reduction="sum")#weight=weigths)  
         self.experiment_id=None
         try:
             self.experiment_id=self.logger.experiment.path
@@ -142,61 +143,103 @@ class LSHAC_NERModel(pl.LightningModule):
         return self.types.index(self.class_type_mapping[self.orig_classes.names[class_label]])
     
     def _get_clustering_model(self, word_ids):
-        #returns the clustering model for the given word ids
+        """
+        returns the clustering model for the given word ids
+        It uses the connectivity matrix to avoid clustering words that are not connected
+        and to avoid clustering tokens that are not in the same word
+        """
         connectivity_matrix=utils.get_connectivity_matrix(word_ids)
         return AgglomerativeClustering(n_clusters=None,compute_full_tree=True,linkage='single',distance_threshold=0,metric=self.hac_metric, connectivity=connectivity_matrix)
-
-    def forward(self, x, word_ids, extra_clusters:List[Tuple[int]]=None) -> Tuple[torch.Tensor,List[Tuple[int,int]],List[torch.Tensor]]:
+    
+    #refactor forward ands split into 2 functions clustering and classifications
+    def _fw_clusters(self, x, word_ids,) -> Tuple[torch.Tensor,List[Set[Tuple[int,int]]]]:
         """
         x: dict of input ids, attention mask, token type ids, special tokens mask
-        extra_clusters: list of clusters to be added to the predicted clusters
-        returns: clusters, logits
+        returns: latent space vectors, clusters
+        latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
         clusters: list of clusters as (min,max) spans for each sentence
-        logits: logits for each cluster
         """
         _,ls=self._full_encode(**x)
-        clusters,logits=[],[]
         sentence_masks=(x["attention_mask"]-x["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
+        all_spans=[]
         for i,ls_vectors in enumerate(ls):
             input_ids=x["input_ids"][i]
             sentence_mask=sentence_masks[i]
             token_indices=torch.argwhere(sentence_mask).squeeze(-1)
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
+            word_ids_list=word_ids[i].detach().cpu().numpy().tolist()
             projected_word_ids=word_ids[i][token_indices].detach().cpu().numpy().tolist()
             clustering_model=self._get_clustering_model(projected_word_ids)
-            predicted_clusters=compute_clusters(clustering_model.fit(token_ls_vectors),projected_word_ids)
-            sentence_clusters=[]
-            new_input_ids=[]
+            predicted_clusters=compute_clusters(clustering_model.fit(token_ls_vectors),word_ids_list)
             spans_set=set()
             for cluster in predicted_clusters:
                 cluster_indices=token_indices[list(cluster)].cpu().numpy()
                 min=cluster_indices.min()
                 max=cluster_indices.max()
                 spans_set.add((min,max))
-            if extra_clusters:
-                spans_set=spans_set.union(set(extra_clusters[i]))
-            for (min,max) in spans_set:
+            all_spans.append(spans_set)
+        return ls,all_spans
+    
+    def _fw_classify(self, x, clusters:List[List[Tuple[int,int]]]) -> List[torch.Tensor]:
+        """
+        x: dict of input ids, attention mask, token type ids, special tokens mask
+        clusters: list of clusters as (min,max) spans for each sentence
+        returns: list of logit tensors for each sentence clusters
+        """
+        logits=[]
+        for i,(input_ids,spans_list) in enumerate(zip(x["input_ids"],clusters)):
+            new_input_ids=[]
+            for (min,max) in spans_list:
                 new_ids=list(input_ids.cpu().numpy()[:min])+\
                     [dm.E_START_ID]+\
                     list(input_ids.cpu().numpy()[min:max+1])+\
                     [dm.E_END_ID]+\
                     list(input_ids.cpu().numpy()[max+1:])
-                sentence_clusters.append((min,max))
                 new_input_ids.append(new_ids)
-            clusters.append(sentence_clusters)
             new_input_ids_t=torch.tensor(new_input_ids).to(self.device)
             attention_mask_t=torch.where(new_input_ids_t!=0,1,0).to(self.device)
             encoded_sentences=self._encode(input_ids=new_input_ids_t,attention_mask=attention_mask_t)
             vectors_class_concat=[]
-            for (min,max),encoded_sentence in zip(sentence_clusters,encoded_sentences):#TODO optimize with tensor operations
+            for (min,max),encoded_sentence in zip(spans_list,encoded_sentences):#TODO optimize with tensor operations
                 vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
                 vectors_class_concat.append(vectors_class)
-
             vectors_class_concat_t=torch.stack(vectors_class_concat,dim=0)
             logit=self.fc_classif(vectors_class_concat_t)
             logits.append(logit)
-        return ls,clusters,logits
+        return logits
+
+
+    def forward(self, x, word_ids, true_clusters:List[Set[Tuple[int,int]]]=None) -> Tuple[torch.Tensor,List[Tuple[int,int]],List[torch.Tensor]]:
+        """
+        x: dict of input ids, attention mask, token type ids, special tokens mask
+        true_clusters: list of clusters from the ground truth. Used for training. If None (inference) the predicted clusters are classified
+        undersample_neg: whether to undersample negative clusters. Used for training
+        returns: latent space vectors, clusters, logits
+        latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
+        clusters: list of clusters as (min,max) spans for each sentence
+        logits: logits for each cluster
+        """
+        ls,predicted_clusters=self._fw_clusters(x,word_ids)
+        clusters_to_classify=[]
+        if true_clusters is not None:
+            #training. undersample predicted clusters. classify true clusters and sampled predicted clusters
+            for true_cluster,predicted_cluster in zip(true_clusters,predicted_clusters):
+                to_classify=[]
+                if type(true_cluster)!=set:
+                    true_cluster=set(true_cluster)
+                to_classify.extend(true_cluster)
+                remaining_predicted_clusters=list(predicted_cluster-true_cluster)
+                sample_size=1
+                if len(remaining_predicted_clusters)>=sample_size:
+                    sample=random.sample(remaining_predicted_clusters,sample_size)
+                    to_classify.extend(sample)
+                clusters_to_classify.append(to_classify)
+        else:
+            #prediction. classify all predicted clusters
+            clusters_to_classify=predicted_clusters
+        logits=self._fw_classify(x,clusters_to_classify)
+        return ls,clusters_to_classify,logits
 
     def class_criterion(self,logits:torch.Tensor, labels_ohe:torch.Tensor)->torch.Tensor:
         """
@@ -232,6 +275,7 @@ class LSHAC_NERModel(pl.LightningModule):
         all_extra_spans=[]
         for i in range(len(cluster_masks)):
             gt_clusters=cluster_masks[i]
+            gt_clusters[gt_clusters<=0]=0
             word_ids=all_word_ids[i]
             extra_spans=self.get_extra_spans(gt_clusters)
             all_extra_spans.append(extra_spans)
@@ -324,12 +368,12 @@ class LSHAC_NERModel(pl.LightningModule):
         Adds single word clusters and assigns logits for each cluster
         """
         all_word_ids=batch["all_word_ids"]
-        all_extra_spans=[]
-        for i in range(len(all_word_ids)):
-            word_ids=all_word_ids[i]
-            extra_spans=self.get_word_spans(word_ids)
-            all_extra_spans.append(extra_spans)
-        _,clusters,logits=self.forward(batch["inputs"],all_word_ids,all_extra_spans)
+        # all_extra_spans=[]
+        # for i in range(len(all_word_ids)):
+        #     word_ids=all_word_ids[i]
+        #     extra_spans=self.get_word_spans(word_ids)
+        #     all_extra_spans.append(extra_spans)
+        _,clusters,logits=self.forward(batch["inputs"],all_word_ids)
         return clusters,logits
     
     def predict(self, batch) -> List[LSHAC_NER_Prediction]:
@@ -359,19 +403,6 @@ class LSHAC_NERModel(pl.LightningModule):
                 continue
             min=int(indx.min())
             max=int(indx.max())
-            extra_spans.append((min,max))
-        return extra_spans
-    
-    def get_word_spans(self,word_ids:torch.Tensor) -> List[Tuple[int,int]]:
-        """returns a list of spans derived from the words ids"""
-        extra_spans=[]
-        max_word_id=word_ids.max().item()
-        for j in range(max_word_id):
-            indices=torch.argwhere(word_ids==j).squeeze(-1)
-            if indices.shape[0]==0:
-                continue
-            min=indices.min().item()
-            max=indices.max().item()
             extra_spans.append((min,max))
         return extra_spans
     
