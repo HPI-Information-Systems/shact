@@ -233,7 +233,7 @@ class LSHAC_NERModel(pl.LightningModule):
         for i in range(len(cluster_masks)):
             gt_clusters=cluster_masks[i]
             word_ids=all_word_ids[i]
-            extra_spans=self.get_extra_spans(gt_clusters,word_ids)
+            extra_spans=self.get_extra_spans(gt_clusters)
             all_extra_spans.append(extra_spans)
         ls_vectors,clusters,logits=self.forward(inputs,all_word_ids,all_extra_spans)
         ls_loss=self.ls_loss(ls_vectors,batch)
@@ -327,7 +327,7 @@ class LSHAC_NERModel(pl.LightningModule):
         all_extra_spans=[]
         for i in range(len(all_word_ids)):
             word_ids=all_word_ids[i]
-            extra_spans=self.get_extra_spans([],word_ids)
+            extra_spans=self.get_word_spans(word_ids)
             all_extra_spans.append(extra_spans)
         _,clusters,logits=self.forward(batch["inputs"],all_word_ids,all_extra_spans)
         return clusters,logits
@@ -350,8 +350,8 @@ class LSHAC_NERModel(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
-    def get_extra_spans(self,clusters,word_ids):
-        """returns a list of spans derived from the clusters and individual words"""
+    def get_extra_spans(self,clusters:torch.Tensor) -> List[Tuple[int,int]]:
+        """returns a list of spans derived from the clusters masks"""
         extra_spans=[]
         for cluster in clusters:
             indx=torch.argwhere(cluster).squeeze(-1)
@@ -360,6 +360,11 @@ class LSHAC_NERModel(pl.LightningModule):
             min=int(indx.min())
             max=int(indx.max())
             extra_spans.append((min,max))
+        return extra_spans
+    
+    def get_word_spans(self,word_ids:torch.Tensor) -> List[Tuple[int,int]]:
+        """returns a list of spans derived from the words ids"""
+        extra_spans=[]
         max_word_id=word_ids.max().item()
         for j in range(max_word_id):
             indices=torch.argwhere(word_ids==j).squeeze(-1)
