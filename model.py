@@ -14,6 +14,7 @@ from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
 import evaluate
 import random
+from pytorch_lightning.loggers.wandb import WandbLogger
 
 class LSHAC_NER_Prediction():
     #class with clusters and types for each cluster fro a single sentence
@@ -29,7 +30,10 @@ class LSHAC_NER_Prediction():
         for cluster,logit in zip(clusters,logits):
             class_ix=torch.argmax(logit).item()
             if class_ix!=types_list.index("O"):
-                self.assignments.append((cluster,torch.argmax(logit).item()))
+                self.assignments.append((cluster,class_ix))
+        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
+        #removes nested clusters. Keeps the bigger one
+        self.flat_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
         self.seq_labels=self._get_seq_labels()
         self.seq_labels_compressed=None
         if word_ids:
@@ -39,19 +43,16 @@ class LSHAC_NER_Prediction():
             for i,wid in enumerate(word_ids):
                 if wid>=0 and (i==0 or wid!=word_ids[i-1]):
                     self.seq_labels_compressed.append(self.seq_labels[i])
-
+        
     def __repr__(self):
         return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
     
     def _get_seq_labels(self) -> List[Tuple[Tuple[int,int],int]]:
         seq_labels=[]
-        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
-        #removes nested clusters. Keeps the bigger one
-        pruned_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
         for i in range(self.sentence_mask.shape[0]):
             if self.sentence_mask[i]!=1:
                 continue
-            containing_clusters=[(c,a) for (c,a) in pruned_assignments if i in range(c[0],c[1]+1)]
+            containing_clusters=[(c,a) for (c,a) in self.flat_assignments if i in range(c[0],c[1]+1)]
             cluster,assignment=(containing_clusters[0][0],containing_clusters[0][1]) if len(containing_clusters)>0 else (None,None)
             if cluster:
                 if i==cluster[0]:
@@ -266,6 +267,30 @@ class LSHAC_NERModel(pl.LightningModule):
             return None
         ls_loss2,_ = hac_sl_ratio_loss_token_based(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
         return ls_loss1+ls_loss2
+    
+    def _get_entities_as_spans(self,clusters:torch.Tensor,labels:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
+        """
+        Converts clusters as masks and labels as IOB numeric labels to a list of spans
+        Each span is a tuple of (min,max) indices, the type index and the one hot encoded type vector
+        clusters: tensor of shape (batch_size,max clusters,seq_len)
+        labels: tensor of shape (batch_size,seq_len)
+        returns: list of list of spans
+        """
+        gt_spans_batch=[]
+        for gt_clusters,gt_labels in zip(clusters,labels):
+            gt_spans_sentence=[]
+            for gt_cluster in gt_clusters:
+                indices=torch.argwhere(gt_cluster==1).squeeze(-1)
+                if indices.shape[0]==0:
+                    continue
+                min=torch.min(indices).item()
+                max=torch.max(indices).item()
+                label_type_idx=self._get_type_idx(gt_labels[min].item())
+                classes_tensor_ohe=torch.zeros(len(self.types))
+                classes_tensor_ohe[label_type_idx]=1
+                gt_spans_sentence.append(((min,max),label_type_idx,classes_tensor_ohe))
+            gt_spans_batch.append(gt_spans_sentence)
+        return gt_spans_batch        
 
     def compute_losses(self, batch, batch_idx):
         inputs=batch["inputs"]
@@ -281,24 +306,18 @@ class LSHAC_NERModel(pl.LightningModule):
             all_extra_spans.append(extra_spans)
         ls_vectors,clusters,logits=self.forward(inputs,all_word_ids,all_extra_spans)
         ls_loss=self.ls_loss(ls_vectors,batch)
+
+        all_gt_spans=self._get_entities_as_spans(cluster_masks,y)
+
         gt_spans_batch=[]
         gt_classes_ohe_batch=[]
-        for gt_clusters,gt_labels in zip(batch["final_cluster_masks"],batch["labels"]):
-            gt_spans_sentence=[]
-            gt_classes_sentence=[]
-            for gt_cluster in gt_clusters:
-                indices=torch.argwhere(gt_cluster==1).squeeze(-1)
-                if indices.shape[0]==0:
-                    continue
-                min=torch.min(indices).item()
-                max=torch.max(indices).item()
-                gt_spans_sentence.append((min,max))
-                label_type_idx=self._get_type_idx(gt_labels[min].item())
-                classes_tensor_ohe=torch.zeros(len(self.types))
-                classes_tensor_ohe[label_type_idx]=1
-                gt_classes_sentence.append(classes_tensor_ohe)
-            gt_spans_batch.append(gt_spans_sentence)
-            gt_classes_ohe_batch.append(gt_classes_sentence)
+
+        for spans_sentence in all_gt_spans:
+            min_max_spans_sentence=[span[0] for span in spans_sentence]
+            classes_ohe_sentence=[span[2] for span in spans_sentence]
+            gt_spans_batch.append(min_max_spans_sentence)
+            gt_classes_ohe_batch.append(classes_ohe_sentence)
+        
         ohe_no_entity=torch.zeros(len(self.types))
         ohe_no_entity[self.types.index(self.class_type_mapping["O"])]=1
         losses=[]
@@ -349,7 +368,6 @@ class LSHAC_NERModel(pl.LightningModule):
             for label in label_array:
                 gt_sentence.append(self.orig_classes.int2str(label))
             gt.append(gt_sentence)
-        
         res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
         val_f1=res["overall_f1"]
         self.log("metrics/val_f1",val_f1)
@@ -361,6 +379,26 @@ class LSHAC_NERModel(pl.LightningModule):
             else:
                 if k!="overall_f1" and type(v)==float or type(v)==int:
                     self.log(f"metrics/val_{k}",float(v))
+        gt_spans=self._get_entities_as_spans(batch["final_cluster_masks"],batch["labels"])
+        flatten_gt_types=[]
+        flatten_predicted_types=[]
+        for gt_spans_sentence,pred_obj in zip(gt_spans,prediction_objs):
+            gt_dict={}
+            for (gt_start,gt_end),gt_type,_ in gt_spans_sentence:
+                gt_dict[(gt_start,gt_end)]=gt_type
+            for (pred_start,pred_end),pred_type in pred_obj.assignments:
+                if (pred_start,pred_end) in gt_dict:
+                    gt_type=gt_dict[(pred_start,pred_end)]
+                    flatten_gt_types.append(gt_type)
+                    flatten_predicted_types.append(pred_type)
+                else:
+                    flatten_gt_types.append(self.types.index("O"))
+                    flatten_predicted_types.append(pred_type)
+        #if wandb logger is used, log confusion matrix
+        if type(self.logger)==WandbLogger:
+            if self.trainer.state.stage!="sanity_check":
+                import wandb.plot
+                wandb.log({"confusion_matrix":wandb.plot.confusion_matrix(probs=None, y_true=flatten_gt_types, preds=flatten_predicted_types, class_names=self.types)})
         return loss
     
     def _predict_logits(self, batch) -> Tuple[List[List[Tuple[int,int]]], List[torch.Tensor]]:

@@ -73,6 +73,26 @@ def get_potential_recall(clusters:List[List[Tuple[int,int]]], batch:Dict) -> Dic
     for label_type_idx in total.keys():
         results[label_type_idx]=found[label_type_idx]/total[label_type_idx]
     return results
-    
+
+def get_confusion_matrix(gt_spans:List[List[Tuple[Tuple[int, int], int, torch.Tensor]]],predictions:List):
+    """
+    Computes the confusion matrix of the predictions
+    :param gt_spans: List of lists of tuples ((start, end),type,type_ohe) of the clusters reuslting from HAC
+    :param predictions: List of LSHAC_NER_Prediction with predictions
+    """
+    confusion_matrix={}
+    for gt_clusters,prediction in zip(gt_spans,predictions):
+        for gt_cluster in gt_clusters:
+            gt_span=gt_cluster[0]
+            gt_type=gt_cluster[1]
+            if confusion_matrix.get(gt_type) is None:
+                confusion_matrix[gt_type]={}
+            for (pred_span,pred_type) in prediction.assignments:
+                if confusion_matrix[gt_type].get(pred_type) is None:
+                    confusion_matrix[gt_type][pred_type]=0
+                if gt_span==pred_span:
+                    confusion_matrix[gt_type][pred_type]+=1
+    return confusion_matrix
+
 
 regex_extract_type=re.compile(r"[B,I]-(.*)")
