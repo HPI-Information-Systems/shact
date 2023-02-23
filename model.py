@@ -27,10 +27,13 @@ class LSHAC_NER_Prediction():
         assert len(clusters)==len(logits)
         self.types_list=types_list
         self.assignments=[]
+        self.not_entities=[]
         for cluster,logit in zip(clusters,logits):
             class_ix=torch.argmax(logit).item()
             if class_ix!=types_list.index("O"):
                 self.assignments.append((cluster,class_ix))
+            else:
+                self.not_entities.append(cluster)
         is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
         #removes nested clusters. Keeps the bigger one
         self.flat_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
@@ -44,6 +47,8 @@ class LSHAC_NER_Prediction():
                 if wid>=0 and (i==0 or wid!=word_ids[i-1]):
                     self.seq_labels_compressed.append(self.seq_labels[i])
 
+    def all_predictions(self)->List[Tuple[Tuple[int,int],int]]:
+        return [(c,a) for (c,a) in self.flat_assignments]+[(c,self.types_list.index("O")) for c in self.not_entities]
         
     def __repr__(self):
         return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
@@ -390,7 +395,8 @@ class LSHAC_NERModel(pl.LightningModule):
                 gt_dict={}
                 for (gt_start,gt_end),gt_type,_ in gt_spans_sentence:
                     gt_dict[(gt_start,gt_end)]=gt_type
-                for (pred_start,pred_end),pred_type in pred_obj.assignments:
+                predicted_spans=set()
+                for (pred_start,pred_end),pred_type in pred_obj.all_predictions():
                     if (pred_start,pred_end) in gt_dict:
                         gt_type=gt_dict[(pred_start,pred_end)]
                         flatten_gt_types.append(gt_type)
@@ -398,6 +404,11 @@ class LSHAC_NERModel(pl.LightningModule):
                     else:
                         flatten_gt_types.append(self.types.index("O"))
                         flatten_predicted_types.append(pred_type)
+                    predicted_spans.add((pred_start,pred_end))
+                for (gt_start,gt_end),gt_type in gt_dict.items():
+                    if (gt_start,gt_end) not in [x[0] for x in pred_obj.assignments]:
+                        flatten_gt_types.append(gt_type)
+                        flatten_predicted_types.append(self.types.index("O"))
             
             self.val_classification["predicted"].extend(flatten_predicted_types)
             self.val_classification["gt"].extend(flatten_gt_types)
