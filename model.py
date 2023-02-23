@@ -43,6 +43,7 @@ class LSHAC_NER_Prediction():
             for i,wid in enumerate(word_ids):
                 if wid>=0 and (i==0 or wid!=word_ids[i-1]):
                     self.seq_labels_compressed.append(self.seq_labels[i])
+
         
     def __repr__(self):
         return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
@@ -97,6 +98,7 @@ class LSHAC_NERModel(pl.LightningModule):
             #random id
             self.experiment_id=str(np.random.randint(1000000))
         self.seqeval_metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
+        self.val_classification=None
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -379,27 +381,40 @@ class LSHAC_NERModel(pl.LightningModule):
             else:
                 if k!="overall_f1" and type(v)==float or type(v)==int:
                     self.log(f"metrics/val_{k}",float(v))
-        gt_spans=self._get_entities_as_spans(batch["final_cluster_masks"],batch["labels"])
-        flatten_gt_types=[]
-        flatten_predicted_types=[]
-        for gt_spans_sentence,pred_obj in zip(gt_spans,prediction_objs):
-            gt_dict={}
-            for (gt_start,gt_end),gt_type,_ in gt_spans_sentence:
-                gt_dict[(gt_start,gt_end)]=gt_type
-            for (pred_start,pred_end),pred_type in pred_obj.assignments:
-                if (pred_start,pred_end) in gt_dict:
-                    gt_type=gt_dict[(pred_start,pred_end)]
-                    flatten_gt_types.append(gt_type)
-                    flatten_predicted_types.append(pred_type)
-                else:
-                    flatten_gt_types.append(self.types.index("O"))
-                    flatten_predicted_types.append(pred_type)
-        #if wandb logger is used, log confusion matrix
+        #if using confusion matrix
+        if self.val_classification is not None:
+            gt_spans=self._get_entities_as_spans(batch["final_cluster_masks"],batch["labels"])
+            flatten_gt_types=[]
+            flatten_predicted_types=[]
+            for gt_spans_sentence,pred_obj in zip(gt_spans,prediction_objs):
+                gt_dict={}
+                for (gt_start,gt_end),gt_type,_ in gt_spans_sentence:
+                    gt_dict[(gt_start,gt_end)]=gt_type
+                for (pred_start,pred_end),pred_type in pred_obj.assignments:
+                    if (pred_start,pred_end) in gt_dict:
+                        gt_type=gt_dict[(pred_start,pred_end)]
+                        flatten_gt_types.append(gt_type)
+                        flatten_predicted_types.append(pred_type)
+                    else:
+                        flatten_gt_types.append(self.types.index("O"))
+                        flatten_predicted_types.append(pred_type)
+            
+            self.val_classification["predicted"].extend(flatten_predicted_types)
+            self.val_classification["gt"].extend(flatten_gt_types)
+            
+        return loss
+    
+    def start_confusion_matrix(self):
+        self.val_classification={
+            "predicted":[],
+            "gt":[]
+        }
+
+    def log_confusion_matrix(self):
         if type(self.logger)==WandbLogger:
             if self.trainer.state.stage!="sanity_check":
                 import wandb.plot
-                wandb.log({"confusion_matrix":wandb.plot.confusion_matrix(probs=None, y_true=flatten_gt_types, preds=flatten_predicted_types, class_names=self.types)})
-        return loss
+                wandb.log({"confusion_matrix":wandb.plot.confusion_matrix(probs=None, y_true=self.val_classification["gt"], preds=self.val_classification["predicted"], class_names=self.types)})
     
     def _predict_logits(self, batch) -> Tuple[List[List[Tuple[int,int]]], List[torch.Tensor]]:
         """

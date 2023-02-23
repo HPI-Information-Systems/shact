@@ -13,6 +13,7 @@ from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
+from utils import ConfusionMatrixCallback
 
 def get_tag_format(hf_dataset):
     is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
@@ -55,6 +56,7 @@ if __name__ == '__main__':
 
     early_stop = EarlyStopping(monitor="losses/val_loss",mode="min",patience=args.patience)
     checkpoint_callback = ModelCheckpoint(save_top_k=1, monitor="losses/val_loss", mode="min")
+    confusion_matrix_callback=ConfusionMatrixCallback()
     
     config = AutoConfig.from_pretrained(lang_model_name, output_hidden_states=True, output_attentions=True, output_special_tokens=True)
     transformers_model = AutoModel.from_pretrained(lang_model_name, config=config)
@@ -69,7 +71,7 @@ if __name__ == '__main__':
     
     include_special_tokens(transformers_model,tokenizer)
 
-    trainer=pl.Trainer.from_argparse_args(args,logger=logger,callbacks=[early_stop, checkpoint_callback],deterministic=True)
+    trainer=pl.Trainer.from_argparse_args(args,logger=logger,callbacks=[early_stop, checkpoint_callback, confusion_matrix_callback],deterministic=True)
 
     hf_dataset=None
     if args.sub_dataset:
