@@ -78,7 +78,7 @@ class LSHAC_NERModel(pl.LightningModule):
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
                  hac_metric=None,
-                 type_weights:Dict[str,float]=None,):
+                 neg_sample_size:int=1,):
         super().__init__()
         self.transformer_model=transformer_model
         self.orig_classes=classes
@@ -94,8 +94,7 @@ class LSHAC_NERModel(pl.LightningModule):
         self.hac_metric=hac_metric
         if (not hac_metric) and distance_fn==torch.cdist:
             self.hac_metric="euclidean"
-        weigths=self._align_weights(type_weights)
-        self.loss_fn=nn.CrossEntropyLoss(reduction="sum")#weight=weigths)  
+        self.loss_fn=nn.CrossEntropyLoss(reduction="sum")
         self.experiment_id=None
         try:
             self.experiment_id=self.logger.experiment.path
@@ -104,6 +103,7 @@ class LSHAC_NERModel(pl.LightningModule):
             self.experiment_id=str(np.random.randint(1000000))
         self.seqeval_metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
         self.val_classification=None
+        self.neg_sample_size=neg_sample_size
 
     def save_hyperparameters(self,**kwargs):
         kwargs.setdefault("ignore",[]).append("transformer_model")
@@ -229,7 +229,6 @@ class LSHAC_NERModel(pl.LightningModule):
         """
         x: dict of input ids, attention mask, token type ids, special tokens mask
         true_clusters: list of clusters from the ground truth. Used for training. If None (inference) the predicted clusters are classified
-        undersample_neg: whether to undersample negative clusters. Used for training
         returns: latent space vectors, clusters, logits
         latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
         clusters: list of clusters as (min,max) spans for each sentence
@@ -245,10 +244,12 @@ class LSHAC_NERModel(pl.LightningModule):
                     true_cluster=set(true_cluster)
                 to_classify.extend(true_cluster)
                 remaining_predicted_clusters=list(predicted_cluster-true_cluster)
-                sample_size=1
-                if len(remaining_predicted_clusters)>=sample_size:
+                sample_size=self.neg_sample_size
+                if len(remaining_predicted_clusters)>sample_size:
                     sample=random.sample(remaining_predicted_clusters,sample_size)
                     to_classify.extend(sample)
+                else:
+                    to_classify.extend(remaining_predicted_clusters)
                 clusters_to_classify.append(to_classify)
         else:
             #prediction. classify all predicted clusters

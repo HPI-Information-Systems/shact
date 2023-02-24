@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
+    parser.add_argument("--neg_sample_size", default=1, type=int , help="Number of non entity spans for sentence to use for training the classifier")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
@@ -87,7 +88,7 @@ if __name__ == '__main__':
     distance_fn=cosine_distance if args.distance=="cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
     ner_model = LSHAC_NERModel(transformers_model, classes=dm.class_label_obj, lr=args.lr,
-                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, type_weights=type_weigths)
+                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, neg_sample_size=args.neg_sample_size)
 
     assert ner_model is not None
     
