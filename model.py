@@ -117,7 +117,7 @@ class LSHAC_NERModel(pl.LightningModule):
         final_layer=hidden_states[-1]
         return final_layer,ls
     
-    def _encode(self, **x)->Tuple[torch.Tensor,torch.Tensor]:
+    def _encode(self, **x)->torch.Tensor:
         #encodes the input x using the transformer model
         rep=self.transformer_model(**utils.filter_kwargs(self.transformer_model.forward,x),output_hidden_states=False).last_hidden_state
         return rep
@@ -196,6 +196,7 @@ class LSHAC_NERModel(pl.LightningModule):
         returns: list of logit tensors for each sentence clusters
         """
         logits=[]
+        batch_size=x["input_ids"].shape[0]
         for i,(input_ids,spans_list) in enumerate(zip(x["input_ids"],clusters)):
             new_input_ids=[]
             for (min,max) in spans_list:
@@ -207,7 +208,13 @@ class LSHAC_NERModel(pl.LightningModule):
                 new_input_ids.append(new_ids)
             new_input_ids_t=torch.tensor(new_input_ids).to(self.device)
             attention_mask_t=torch.where(new_input_ids_t!=0,1,0).to(self.device)
-            encoded_sentences=self._encode(input_ids=new_input_ids_t,attention_mask=attention_mask_t)
+            batched_input_ids=torch.split(new_input_ids_t,batch_size,dim=0)
+            batched_attention_mask=torch.split(attention_mask_t,batch_size,dim=0)
+            encoded_sentences=[]
+            for batch_input_ids,batch_attention_mask in zip(batched_input_ids,batched_attention_mask):
+                encoded_sentences+=self._encode(input_ids=batch_input_ids,attention_mask=batch_attention_mask)
+            encoded_sentences=torch.stack(encoded_sentences,dim=0)
+            #encoded_sentences=self._encode(input_ids=new_input_ids_t,attention_mask=attention_mask_t)
             vectors_class_concat=[]
             for (min,max),encoded_sentence in zip(spans_list,encoded_sentences):#TODO optimize with tensor operations
                 vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
