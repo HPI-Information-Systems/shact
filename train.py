@@ -43,7 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
-    parser.add_argument("--neg_sample_size", default=1, type=int , help="Number of non entity spans for sentence to use for training the classifier")
+    parser.add_argument("--neg_sample_size", type=int , help="Number of non entity spans for sentence to use for training the classifier")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()

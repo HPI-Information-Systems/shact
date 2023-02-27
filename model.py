@@ -74,11 +74,11 @@ class LSHAC_NER_Prediction():
 class LSHAC_NERModel(pl.LightningModule):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
+                 neg_sample_size:int,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
-                 hac_metric=None,
-                 neg_sample_size:int=1,):
+                 hac_metric=None,):
         super().__init__()
         self.transformer_model=transformer_model
         self.orig_classes=classes
@@ -245,7 +245,7 @@ class LSHAC_NERModel(pl.LightningModule):
                 to_classify.extend(true_cluster)
                 remaining_predicted_clusters=list(predicted_cluster-true_cluster)
                 sample_size=self.neg_sample_size
-                if len(remaining_predicted_clusters)>sample_size:
+                if sample_size is not None and len(remaining_predicted_clusters)>sample_size:
                     sample=random.sample(remaining_predicted_clusters,sample_size)
                     to_classify.extend(sample)
                 else:
