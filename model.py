@@ -63,7 +63,7 @@ class LSHAC_NER_Prediction():
                     self.seq_labels_compressed.append(self.seq_labels[i])
 
     def all_predictions(self)->List[Tuple[Tuple[int,int],int]]:
-        return [(c,a) for (c,a) in self.flat_assignments]+[(c,self.types_list.index("O")) for c in self.not_entities]
+        return [(c,a) for (c,a) in self.flat_assignments]+[(c,self.types_list.index("O")) for c in self.not_entities]+[(c,self.types_list.index("O")) for c in self.part_of_entities]
         
     def __repr__(self):
         return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
