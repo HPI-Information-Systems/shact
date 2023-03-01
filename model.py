@@ -27,16 +27,31 @@ class LSHAC_NER_Prediction():
         assert len(clusters)==len(logits)
         self.types_list=types_list
         self.assignments=[]
-        self.not_entities=[]
-        for cluster,logit in zip(clusters,logits):
-            class_ix=torch.argmax(logit).item()
+        self.confidence=[]
+        self.prelim_not_entities=[]
+        self.part_of_entities=[]
+        self.probs=torch.softmax(logits,dim=1)
+        for cluster,prob in zip(clusters,self.probs):
+            class_ix=torch.argmax(prob).item()
             if class_ix!=types_list.index("O"):
                 self.assignments.append((cluster,class_ix))
+                self.confidence.append(prob[class_ix].item())
             else:
-                self.not_entities.append(cluster)
-        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.assignments])
+                self.prelim_not_entities.append(cluster)
+
+        assignments_with_confidence=[(c,a,conf) for (c,a),conf in zip(self.assignments,self.confidence)]
+        #removes overlapping clusters. Keeps the one with the highest confidence
+        sorted_awc=[(c,a,conf) for (c,a,conf) in sorted(assignments_with_confidence,key=lambda x: x[2],reverse=True)]
+        self.flat_assignments=[]
+        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.flat_assignments])
+        for (c,a,conf) in sorted_awc:
+            if not is_nested(c):
+                self.flat_assignments.append((c,a))
+            else:
+                self.part_of_entities.append(c)
+        self.not_entities=[c for c in self.prelim_not_entities if c not in self.part_of_entities]
         #removes nested clusters. Keeps the bigger one
-        self.flat_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
+        #self.flat_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
         self.seq_labels=self._get_seq_labels()
         self.seq_labels_compressed=None
         if word_ids:
