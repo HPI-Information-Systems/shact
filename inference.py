@@ -35,6 +35,10 @@ if __name__ == '__main__':
     #if use_wandb:
     api = wandb.Api()
     run = api.run(args.run_path)
+    print("Deleting old files under media/images/test/")
+    for f in run.files():
+        if f.name.startswith("media/images/test/"):
+            f.delete()
     wandb.init(id=run.id, resume="must")
     old_args=Namespace(**run.config)
     logger = WandbLogger(project=wandb_project,name=old_args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))

@@ -382,6 +382,7 @@ class LSHAC_NERModel(pl.LightningModule):
         if log_trees:
             from PIL import Image, ImageDraw, ImageFont
             import io
+            from tabulate import tabulate
             for p_obj,p,g,input_ids in zip(prediction_objs,pred,gt,batch["inputs"]["input_ids"]):
                 if p!=g:
                     #plt.clf()
@@ -390,11 +391,15 @@ class LSHAC_NERModel(pl.LightningModule):
                     bytes_image = tree.create_png()
                     img=Image.open(io.BytesIO(bytes_image))
                     img_w, img_h = img.size
-                    image = Image.new('RGBA', (img_w, img_h+50), (255, 255, 255, 255))
+                    image = Image.new('RGBA', (img_w, img_h+200), (255, 255, 255, 255))
                     image.paste(img, (0,0))
                     draw = ImageDraw.Draw(image)
-                    font = ImageFont.truetype("arial.ttf", 16)
-                    draw.text((0,img_h), "Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g), font=font, fill=(0,0,0))
+                    font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+                    tab_data=[["Pred"]+p,["GT"]+g]
+                    headers=[""]+[str(i) for i in range(len(p))]
+                    #text="Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g)
+                    text=tabulate(tab_data, headers=headers, tablefmt="grid")
+                    draw.text((0,img_h), text, font=font, fill=(0,0,0))
                     self.logger.log_image("test/test_trees",[image],caption=["Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g)])
         return res,prediction_objs,pred,gt
     
