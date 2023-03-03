@@ -1,5 +1,4 @@
 import pytorch_lightning as pl
-import datasets
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
@@ -8,22 +7,12 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os,re
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, include_special_tokens
+from data_modules import HFNer_DataModule, get_tag_format, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
 from utils import ConfusionMatrixCallback
-
-def get_tag_format(hf_dataset):
-    is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
-    is_iobes=all([n.startswith("B-") or n.startswith("I-") or n.startswith("E-") or n.startswith("S-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
-    if is_iob:
-        return "IOB"
-    elif is_iobes:
-        return "IOBES"
-    else:
-        return "IO"
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")

@@ -15,75 +15,8 @@ import utils
 import evaluate
 import random
 from pytorch_lightning.loggers.wandb import WandbLogger
+from inference_model import LSHAC_NER_Prediction
 
-class LSHAC_NER_Prediction():
-    #class with clusters and types for each cluster fro a single sentence
-    def __init__(self,clusters:List[Tuple[int,int]],logits:torch.Tensor,types_list:List[str],sentence_mask:torch.Tensor, word_ids:List[int]=None):
-        assert len(sentence_mask.shape)==1, "sentence_mask must be a 1D tensor. results are designed for a single sentence"
-        self.seq_length=sentence_mask.sum().item()
-        self.sentence_mask=sentence_mask
-        self.clusters=clusters
-        self.logits=logits
-        assert len(clusters)==len(logits)
-        self.types_list=types_list
-        self.assignments=[]
-        self.confidence=[]
-        self.prelim_not_entities=[]
-        self.part_of_entities=[]
-        self.probs=torch.softmax(logits,dim=1)
-        for cluster,prob in zip(clusters,self.probs):
-            class_ix=torch.argmax(prob).item()
-            if class_ix!=types_list.index("O"):
-                self.assignments.append((cluster,class_ix))
-                self.confidence.append(prob[class_ix].item())
-            else:
-                self.prelim_not_entities.append(cluster)
-
-        assignments_with_confidence=[(c,a,conf) for (c,a),conf in zip(self.assignments,self.confidence)]
-        #removes overlapping clusters. Keeps the one with the highest confidence
-        sorted_awc=[(c,a,conf) for (c,a,conf) in sorted(assignments_with_confidence,key=lambda x: x[2],reverse=True)]
-        self.flat_assignments=[]
-        is_nested=lambda x: any([(x!=(ini,end) and x[0]>=ini and x[1]<=end) for ((ini,end),_) in self.flat_assignments])
-        for (c,a,conf) in sorted_awc:
-            if not is_nested(c):
-                self.flat_assignments.append((c,a))
-            else:
-                self.part_of_entities.append(c)
-        self.not_entities=[c for c in self.prelim_not_entities if c not in self.part_of_entities]
-        #removes nested clusters. Keeps the bigger one
-        #self.flat_assignments=[(c,a) for (c,a) in self.assignments if (not is_nested(c))]
-        self.seq_labels=self._get_seq_labels()
-        self.seq_labels_compressed=None
-        if word_ids:
-            # if word_ids are provided, we compress the labels to remove the partial word token labels
-            # we asume the first token of a word is the one with the label
-            self.seq_labels_compressed=[]
-            for i,wid in enumerate(word_ids):
-                if wid>=0 and (i==0 or wid!=word_ids[i-1]):
-                    self.seq_labels_compressed.append(self.seq_labels[i])
-
-    def all_predictions(self)->List[Tuple[Tuple[int,int],int]]:
-        return [(c,a) for (c,a) in self.flat_assignments]+[(c,self.types_list.index("O")) for c in self.not_entities]+[(c,self.types_list.index("O")) for c in self.part_of_entities]
-        
-    def __repr__(self):
-        return f"LSHAC_NER_Prediction(assignments={self.assignments},types_list={self.types_list},seq_length={self.seq_length},sentence_mask={self.sentence_mask})"
-    
-    def _get_seq_labels(self) -> List[Tuple[Tuple[int,int],int]]:
-        seq_labels=[]
-        for i in range(self.sentence_mask.shape[0]):
-            if self.sentence_mask[i]!=1:
-                continue
-            containing_clusters=[(c,a) for (c,a) in self.flat_assignments if i in range(c[0],c[1]+1)]
-            cluster,assignment=(containing_clusters[0][0],containing_clusters[0][1]) if len(containing_clusters)>0 else (None,None)
-            if cluster:
-                if i==cluster[0]:
-                    seq_labels.append("B-"+self.types_list[assignment])
-                else:
-                    seq_labels.append("I-"+self.types_list[assignment])
-            else:
-                seq_labels.append("O")
-        assert len(seq_labels)==self.seq_length
-        return seq_labels
 
 #Pytorch lighning NER model with BERT as the underlying model
 class LSHAC_NERModel(pl.LightningModule):
@@ -374,19 +307,8 @@ class LSHAC_NERModel(pl.LightningModule):
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/train_loss",loss)
         return loss
-
-    def validation_step(self, batch, batch_idx):
-        class_loss,ls_loss=self.compute_losses(batch, batch_idx)
-        if ls_loss:
-            self.log("losses/val_ls_loss",ls_loss)
-        self.log("losses/val_class_loss",class_loss)
-        loss=class_loss+ls_loss if ls_loss else class_loss
-        self.log("losses/val_loss",loss)
-        prediction_objs=self.predict(batch)
-        potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
-        for k,v in potential_recall.items():
-            class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
-            self.log(f"metrics/val_{class_name}_potential_recall",v)
+    
+    def _test_batch(self, batch, prediction_objs):
         predictions=[obj.seq_labels for obj in prediction_objs]
         gt=[]
         labels=batch["labels"]
@@ -399,6 +321,21 @@ class LSHAC_NERModel(pl.LightningModule):
                 gt_sentence.append(self.orig_classes.int2str(label))
             gt.append(gt_sentence)
         res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
+        return predictions,gt,res
+
+    def validation_step(self, batch, batch_idx):
+        class_loss,ls_loss=self.compute_losses(batch, batch_idx)
+        if ls_loss:
+            self.log("losses/val_ls_loss",ls_loss)
+        self.log("losses/val_class_loss",class_loss)
+        loss=class_loss+ls_loss if ls_loss else class_loss
+        self.log("losses/val_loss",loss)
+        prediction_objs=self.predict(batch)
+        res,_,_=self._test_batch(batch,prediction_objs)
+        potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
+        for k,v in potential_recall.items():
+            class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
+            self.log(f"metrics/val_{class_name}_potential_recall",v)
         val_f1=res["overall_f1"]
         self.log("metrics/val_f1",val_f1)
         for k,v in res.items():
@@ -437,6 +374,29 @@ class LSHAC_NERModel(pl.LightningModule):
             self.val_classification["gt"].extend(flatten_gt_types)
             
         return loss
+    
+    def test_step(self, batch, batch_idx, log_trees=True):
+        prediction_objs=self.predict(batch)
+        pred,gt,res=self._test_batch(batch,prediction_objs)
+        trees=[]
+        if log_trees:
+            # import matplotlib.pyplot as plt
+            # import networkx as nx
+            # from PIL import Image
+            # import io
+            # for p_obj,p,g,input_ids in zip(prediction_objs,pred,gt,batch["inputs"]["input_ids"]):
+            #     if p!=g:
+            #         plt.clf()
+            #         tree=p_obj.get_networkx_tree()
+            #         nx.draw(tree,with_labels=True)
+            #         buf = io.BytesIO()
+            #         plt.savefig(buf)
+            #         buf.seek(0)
+            #         img = Image.open(buf)
+            #         p=nx.drawing.nx_pydot.to_pydot(tree)
+            #         p.write_png("test.png")
+            #         #self.logger.log_image("test_trees",[img])
+        return res,prediction_objs,pred,gt
     
     def start_confusion_matrix(self):
         self.val_classification={

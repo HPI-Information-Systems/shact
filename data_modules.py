@@ -19,6 +19,16 @@ E_END="[E_END]"
 E_START_ID=None
 E_END_ID=None
 
+def get_tag_format(hf_dataset):
+    is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
+    is_iobes=all([n.startswith("B-") or n.startswith("I-") or n.startswith("E-") or n.startswith("S-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
+    if is_iob:
+        return "IOB"
+    elif is_iobes:
+        return "IOBES"
+    else:
+        return "IO"
+
 class HFNer_DataModule(pl.LightningDataModule):
     def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=False):
         super().__init__()
