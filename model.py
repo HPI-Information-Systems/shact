@@ -380,22 +380,22 @@ class LSHAC_NERModel(pl.LightningModule):
         pred,gt,res=self._test_batch(batch,prediction_objs)
         trees=[]
         if log_trees:
-            import matplotlib.pyplot as plt
-            import networkx as nx
-            from PIL import Image
+            from PIL import Image, ImageDraw, ImageFont
             import io
             for p_obj,p,g,input_ids in zip(prediction_objs,pred,gt,batch["inputs"]["input_ids"]):
                 if p!=g:
-                    plt.clf()
-                    tree=p_obj.get_networkx_tree()
-                    nx.draw(tree,with_labels=True)
-                    buf = io.BytesIO()
-                    plt.savefig(buf)
-                    buf.seek(0)
-                    img = Image.open(buf)
-                    p=nx.drawing.nx_pydot.to_pydot(tree)
-                    p.write_png("test.png")
-                    #self.logger.log_image("test_trees",[img])
+                    #plt.clf()
+                    tree=p_obj.get_pydot_tree()
+                    trees.append(tree)
+                    bytes_image = tree.create_png()
+                    img=Image.open(io.BytesIO(bytes_image))
+                    img_w, img_h = img.size
+                    image = Image.new('RGBA', (img_w, img_h+50), (255, 255, 255, 255))
+                    image.paste(img, (0,0))
+                    draw = ImageDraw.Draw(image)
+                    font = ImageFont.truetype("arial.ttf", 16)
+                    draw.text((0,img_h), "Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g), font=font, fill=(0,0,0))
+                    self.logger.log_image("test/test_trees",[image],caption=["Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g)])
         return res,prediction_objs,pred,gt
     
     def start_confusion_matrix(self):

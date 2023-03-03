@@ -75,8 +75,8 @@ class LSHAC_NER_Prediction():
         assert len(seq_labels)==self.seq_length
         return seq_labels
     
-    def get_networkx_tree(self, flat=False):
-        import networkx as nx
+    def get_pydot_tree(self, flat=False):
+        import pydot
         assign=self.flat_assignments if flat else self.assignments
         #add single words
 
@@ -88,21 +88,30 @@ class LSHAC_NER_Prediction():
             max_ix=len(self.word_ids)-self.word_ids[::-1].index(i)-1
             if (min_ix,max_ix) not in assigned_spans:
                 assign.append(((min_ix,max_ix),self.types_list.index("O")))
+        assigned_spans=[x[0] for x in assign]
+        for (s,e) in self.not_entities:
+            if (s,e) not in assigned_spans:
+                assign.append(((s,e),self.types_list.index("O")))
         min_total=self.word_ids.index(0)
         max_total=len(self.word_ids)-self.word_ids[::-1].index(max(self.word_ids))-1
         assign.append(((min_total,max_total),self.types_list.index("O")))
 
         assign_by_length_desc=sorted(assign,key=lambda t: (t[0][1]-t[0][0],-t[0][1]),reverse=False)
         assigned_spans=[x[0] for x in assign_by_length_desc]
-        G=nx.DiGraph()
-        G.add_nodes_from(sorted(assign,key=lambda t: (t[0][0],t[0][1]-t[0][0])))
+        G=pydot.Dot(graph_type='digraph',strict=True)
+        for a in sorted(assign,key=lambda t: (t[0][0],t[0][1]-t[0][0])):
+            class_id=a[1]
+            color=class_id%12+1
+            if class_id==self.types_list.index("O"):
+                color="white"
+            G.add_node(pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color, colorscheme="paired12"))
         already_added=[]
         while len(assign_by_length_desc)>0:
             a=assign_by_length_desc.pop()
             #reverse list
             for a2 in already_added[::-1]:
                 if self._is_child(a[0],a2[0]):
-                    G.add_edge(a2,a)
+                    G.add_edge(pydot.Edge(str(a2[0]),str(a[0])))
                     break
             already_added.append(a)
         return G
