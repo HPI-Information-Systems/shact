@@ -39,7 +39,7 @@ if __name__ == '__main__':
     for f in run.files():
         if f.name.startswith("media/images/test/"):
             f.delete()
-    wandb.init(id=run.id, resume="must")
+    wandb.init(id=run.id, project=wandb_project , resume="must")
     old_args=Namespace(**run.config)
     logger = WandbLogger(project=wandb_project,name=old_args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
 
