@@ -86,8 +86,4 @@ if __name__ == '__main__':
         
     dataloader=dm.test_dataloader() if args.use_test else dm.val_dataloader()
     res=trainer.test(ner_model,dataloaders=dataloader)
-    print(type(res))
-    first_res=res[7][3]
-    tree=first_res.get_networkx_tree()
-    print(tree)
     
