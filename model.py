@@ -331,7 +331,7 @@ class LSHAC_NERModel(pl.LightningModule):
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
         prediction_objs=self.predict(batch)
-        res,_,_=self._test_batch(batch,prediction_objs)
+        _,_,res=self._test_batch(batch,prediction_objs)
         potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
         for k,v in potential_recall.items():
             class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
