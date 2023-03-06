@@ -40,7 +40,12 @@ if __name__ == '__main__':
         if f.name.startswith("media/images/test/"):
             f.delete()
     wandb.init(id=run.id, project=wandb_project , resume="must")
-    old_args=Namespace(**run.config)
+    old_config=run.config
+    #delet limit keys
+    for k in ["limit_test_batches"]:
+        if k in old_config:
+            del old_config[k]
+    old_args=Namespace(**old_config)
     logger = WandbLogger(project=wandb_project,name=old_args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
 
     #api = wandb.Api()
@@ -88,6 +93,10 @@ if __name__ == '__main__':
 
     assert ner_model is not None
         
-    dataloader=dm.test_dataloader() if args.use_test else dm.val_dataloader()
-    res=trainer.test(ner_model,dataloaders=dataloader)
+    #dataloader=dm.test_dataloader() if args.use_test else dm.val_dataloader()
+    #dataloader_for_test=[dm.train_dataloader(),dm.val_dataloader()]
+    dataloader_for_test=dm.val_dataloader()
+    res=trainer.test(ner_model,dataloaders=dataloader_for_test)
+    print(len(dataloader_for_test))
+    print(res)
     
