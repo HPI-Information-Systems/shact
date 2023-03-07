@@ -104,7 +104,8 @@ class LSHAC_NER_Prediction():
             color=class_id%12+1
             if class_id==self.types_list.index("O"):
                 color="white"
-            G.add_node(pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color, colorscheme="paired12"))
+            node=pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color, colorscheme="paired12")
+            G.add_node(node)
         already_added=[]
         while len(assign_by_length_desc)>0:
             a=assign_by_length_desc.pop()

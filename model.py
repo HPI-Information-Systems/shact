@@ -308,7 +308,13 @@ class LSHAC_NERModel(pl.LightningModule):
         self.log("losses/train_loss",loss)
         return loss
     
-    def _test_batch(self, batch, prediction_objs):
+    def compute_labels(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+        """
+        Computes the predicted and ground truth labels in the IOB format
+        batch: batch of data. Used for getting the ground truth labels
+        prediction_objs: list of prediction objects
+        returns: tuple of predicted labels and ground truth labels
+        """
         predictions=[obj.seq_labels for obj in prediction_objs]
         gt=[]
         labels=batch["labels"]
@@ -320,6 +326,10 @@ class LSHAC_NERModel(pl.LightningModule):
             for label in label_array:
                 gt_sentence.append(self.orig_classes.int2str(label))
             gt.append(gt_sentence)
+        return predictions,gt
+    
+    def _test_batch(self, batch, prediction_objs):
+        predictions,gt=self.compute_labels(batch, prediction_objs)
         res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
         return predictions,gt,res
 
@@ -330,7 +340,7 @@ class LSHAC_NERModel(pl.LightningModule):
         self.log("losses/val_class_loss",class_loss)
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
-        prediction_objs=self.predict(batch)
+        prediction_objs,_=self.predict(batch)
         _,_,res=self._test_batch(batch,prediction_objs)
         potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
         for k,v in potential_recall.items():
@@ -376,32 +386,19 @@ class LSHAC_NERModel(pl.LightningModule):
         return loss
     
     def test_step(self, batch, batch_idx, log_trees=True):
-        prediction_objs=self.predict(batch)
+        prediction_objs,_=self.predict(batch)
         pred,gt,res=self._test_batch(batch,prediction_objs)
-        trees=[]
-        if log_trees:
-            from PIL import Image, ImageDraw, ImageFont
-            import io
-            from tabulate import tabulate
-            for p_obj,p,g,input_ids in zip(prediction_objs,pred,gt,batch["inputs"]["input_ids"]):
-                if p!=g:
-                    #plt.clf()
-                    tree=p_obj.get_pydot_tree()
-                    trees.append(tree)
-                    bytes_image = tree.create_png()
-                    img=Image.open(io.BytesIO(bytes_image))
-                    img_w, img_h = img.size
-                    image = Image.new('RGBA', (img_w, img_h+200), (255, 255, 255, 255))
-                    image.paste(img, (0,0))
-                    draw = ImageDraw.Draw(image)
-                    font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
-                    tab_data=[["Pred"]+p,["GT"]+g]
-                    headers=[""]+[str(i) for i in range(len(p))]
-                    #text="Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g)
-                    text=tabulate(tab_data, headers=headers, tablefmt="grid")
-                    draw.text((0,img_h), text, font=font, fill=(0,0,0))
-                    self.logger.log_image("test/test_trees",[image],caption=["Predicted: "+str(p)+"\n"+"Ground Truth: "+str(g)])
         return res,prediction_objs,pred,gt
+    
+    def test_epoch_end(self, outputs):
+        all_predictions=[]
+        all_gt=[]
+        for res,prediction_objs,pred,gt in outputs:
+            all_predictions.extend(pred)
+            all_gt.extend(gt)
+        
+        res=self.seqeval_metric.compute(predictions=all_predictions, references=all_gt, zero_division=0)
+        self.log("metrics/test_f1",res["overall_f1"])
     
     def start_confusion_matrix(self):
         self.val_classification={
@@ -428,7 +425,7 @@ class LSHAC_NERModel(pl.LightningModule):
         _,clusters,logits=self.forward(batch["inputs"],all_word_ids)
         return clusters,logits
     
-    def predict(self, batch) -> List[LSHAC_NER_Prediction]:
+    def predict(self, batch) -> Tuple[List[LSHAC_NER_Prediction], Any]:
         clusters,logits = self._predict_logits(batch)
         sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
@@ -437,7 +434,7 @@ class LSHAC_NERModel(pl.LightningModule):
         for (sentence_clusters,cluster_logits,sentence_mask,word_ids_t) in zip(clusters,logits,sentence_masks,all_word_ids):
             word_ids=word_ids_t[sentence_mask==1].tolist()
             predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask,word_ids=word_ids))
-        return predictions
+        return predictions, batch
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
         return self.predict(batch)

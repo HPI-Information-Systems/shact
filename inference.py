@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 import datasets
+from tqdm import tqdm
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
@@ -15,6 +16,11 @@ from dotenv import dotenv_values
 from latent_space import cosine_distance
 from utils import ConfusionMatrixCallback
 from argparse import Namespace
+from PIL import Image, ImageDraw, ImageFont
+import io
+from tabulate import tabulate
+import vis
+import imgkit
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
@@ -27,18 +33,21 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
-    parser = pl.Trainer.add_argparse_args(parser)
-    parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
+    parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
+    parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
+    #parser = pl.Trainer.add_argparse_args(parser)
+    #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
     pl.seed_everything(args.seed)
     logger=False
     #if use_wandb:
     api = wandb.Api()
     run = api.run(args.run_path)
-    print("Deleting old files under media/images/test/")
-    for f in run.files():
-        if f.name.startswith("media/images/test/"):
-            f.delete()
+    if args.clean:
+        print("Deleting old files under media/images/test/")
+        for f in run.files():
+            if f.name.startswith("media/images/test/"):
+                f.delete()
     wandb.init(id=run.id, project=wandb_project , resume="must")
     old_config=run.config
     #delet limit keys
@@ -66,6 +75,8 @@ if __name__ == '__main__':
     
     include_special_tokens(transformers_model,tokenizer)
 
+    old_args.limit_predict_batches=args.limit
+
     trainer=pl.Trainer.from_argparse_args(old_args,logger=logger,deterministic=True)
 
     hf_dataset=None
@@ -76,8 +87,6 @@ if __name__ == '__main__':
     
     dm=HFNer_DataModule(hf_dataset,tokenizer=tokenizer,batch_size=args.batch_size,num_workers=args.workers,tag_format=get_tag_format(hf_dataset),only_with_mw_nes=False)
     
-    #distance_fn=cosine_distance if old_args.distance=="cosine" else torch.cdist
-    #hac_metric="cosine" if old_args.distance=="cosine" else "euclidean"
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
     ckpt_dir=os.path.join(logger.save_dir,run_spl[1],run_spl[2],"checkpoints")
@@ -93,10 +102,54 @@ if __name__ == '__main__':
 
     assert ner_model is not None
         
-    #dataloader=dm.test_dataloader() if args.use_test else dm.val_dataloader()
-    #dataloader_for_test=[dm.train_dataloader(),dm.val_dataloader()]
+    dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
     dataloader_for_test=dm.val_dataloader()
-    res=trainer.test(ner_model,dataloaders=dataloader_for_test)
-    print(len(dataloader_for_test))
-    print(res)
+    res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
+    for (predictions, batch) in tqdm(res):
+        pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+        batch_images=[]
+        for p,g,p_obj,input_ids in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"]):
+            if p!=g:
+                tree=p_obj.get_pydot_tree()
+                
+                sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
+                tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
+                is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
+                leaves=[node for node in tree.get_nodes() if is_leaf(node)]
+                for i,leaf in enumerate(leaves):
+                    span=eval(eval(leaf.get_name()))
+                    tokens_span=tokens[span[0]:span[1]+1]
+                    leaf.set_label(leaf.get_label()+"\n"+" ".join(tokens_span))
+                bytes_image = tree.create_png()
+                img=Image.open(io.BytesIO(bytes_image))
+                #resize to max 1024 width
+                img_w, img_h = img.size
+                if img_w>1024:
+                    img_h=int(img_h*1024/img_w)
+                    img_w=1024
+                    img=img.resize((img_w,img_h))
+                #draw = ImageDraw.Draw(image)
+                #font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+                #tab_data=[["Pred"]+p,["GT"]+g]
+                #headers=[""]+[str(i) for i in range(len(p))]
+                #text=tabulate(tab_data, headers=headers, tablefmt="grid")
+                #draw.text((0,img_h), text, font=font, fill=(0,0,0))
+                html_p=vis.visualize(tokens,tags_iob=p)
+                png_p=imgkit.from_string(html_p, False, options={"width":img_w, "log-level":"none"})
+                img_p=Image.open(io.BytesIO(png_p))
+                img_w_p, img_h_p = img_p.size
+                html_g=vis.visualize(tokens,tags_iob=g)
+                png_g=imgkit.from_string(html_g, False, options={"width":img_w, "log-level":"none"})
+                img_g=Image.open(io.BytesIO(png_g))
+                img_w_g, img_h_g = img_g.size
+                image = Image.new('RGBA', (img_w, img_h+img_h_g+img_h_p), (255, 255, 255, 255))
+                image.paste(img, (0,0))
+                image.paste(img_g, (0,img_h))
+                image.paste(img_p, (0,img_h+img_h_g))
+                font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+                draw = ImageDraw.Draw(image)
+                draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
+                draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
+                wandb.log({"test/trees":wandb.Image(image, caption=sentence)})    
+
     
