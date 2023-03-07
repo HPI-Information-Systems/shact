@@ -34,8 +34,7 @@ def compute_clusters(clust_model:AgglomerativeClustering, word_ids:List[int])->L
                 cluster_set.add(i)
             else:
                 cluster_set=cluster_set.union(predicted_clusters[i-len_tokens])
-        if len(cluster_set)<len_tokens:#ignore complete set
-            predicted_clusters.append(cluster_set)
+        predicted_clusters.append(cluster_set)
     predicted_clusters=[c for c in predicted_clusters if not broken_word(word_ids, c)]
     word_spans=get_word_spans(word_ids)
     for word_span in word_spans:
