@@ -193,8 +193,8 @@ class LSHAC_NERModel(pl.LightningModule):
                 to_classify.extend(true_cluster)
                 remaining_predicted_clusters=list(predicted_cluster-true_cluster)
                 #remove partial clusters from remaining
-                is_part_of_true_cluster=lambda x: any([x[0]>=min and x[1]<=max for (min,max) in true_cluster])
-                remaining_predicted_clusters=[x for x in remaining_predicted_clusters if not is_part_of_true_cluster(x)]
+                #is_part_of_true_cluster=lambda x: any([x[0]>=min and x[1]<=max for (min,max) in true_cluster])
+                #remaining_predicted_clusters=[x for x in remaining_predicted_clusters if not is_part_of_true_cluster(x)]
                 sample_size=self.neg_sample_size
                 if sample_size is not None and len(remaining_predicted_clusters)>sample_size:
                     sample=random.sample(remaining_predicted_clusters,sample_size)
