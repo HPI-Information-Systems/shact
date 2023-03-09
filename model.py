@@ -344,21 +344,12 @@ class LSHAC_NERModel(pl.LightningModule):
         loss=class_loss+ls_loss if ls_loss else class_loss
         self.log("losses/val_loss",loss)
         prediction_objs,_=self.predict(batch)
-        _,_,res=self._test_batch(batch,prediction_objs)
+        prediction_labels,gt_labels,res=self._test_batch(batch,prediction_objs)
         potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
         for k,v in potential_recall.items():
             class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
             self.log(f"metrics/val_{class_name}_potential_recall",v)
-        val_f1=res["overall_f1"]
-        self.log("metrics/val_f1",val_f1)
-        for k,v in res.items():
-            if type(v)==dict:
-                #per class performance
-                for k_,v_ in v.items():
-                    self.log(f"metrics/val_{k}_{k_}",float(v_))
-            else:
-                if k!="overall_f1" and type(v)==float or type(v)==int:
-                    self.log(f"metrics/val_{k}",float(v))
+        
         #if using confusion matrix
         if self.val_classification is not None:
             gt_spans=self._get_entities_as_spans(batch["final_cluster_masks"],batch["labels"])
@@ -386,7 +377,29 @@ class LSHAC_NERModel(pl.LightningModule):
             self.val_classification["predicted"].extend(flatten_predicted_types)
             self.val_classification["gt"].extend(flatten_gt_types)
             
-        return loss
+        return prediction_objs,prediction_labels,gt_labels
+    
+    def validation_epoch_end(self, outputs):
+        self.log_confusion_matrix()
+        self.val_pred_labels=[]
+        self.val_gt_labels=[]
+        for (prediction_objs,prediction_labels,gt_labels) in outputs:
+            self.val_pred_labels.extend(prediction_labels)
+            self.val_gt_labels.extend(gt_labels)
+        res=self.seqeval_metric.compute(predictions=self.val_pred_labels, references=self.val_gt_labels, zero_division=0)
+        val_f1=res["overall_f1"]
+        self.log("metrics/val_f1",val_f1)
+        for k,v in res.items():
+            if type(v)==dict:
+                #per class performance
+                for k_,v_ in v.items():
+                    self.log(f"metrics/val_{k}_{k_}",float(v_))
+            else:
+                if k!="overall_f1" and type(v)==float or type(v)==int:
+                    self.log(f"metrics/val_{k}",float(v))
+        self.start_confusion_matrix()
+        del self.val_pred_labels
+        del self.val_gt_labels
     
     def test_step(self, batch, batch_idx, log_trees=True):
         prediction_objs,_=self.predict(batch)

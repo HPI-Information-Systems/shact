@@ -97,13 +97,4 @@ def get_confusion_matrix(gt_spans:List[List[Tuple[Tuple[int, int], int, torch.Te
     return confusion_matrix
 
 
-class ConfusionMatrixCallback(Callback):
-
-    def on_validation_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        pl_module.start_confusion_matrix()
-
-    def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        pl_module.log_confusion_matrix()
-    
-
 regex_extract_type=re.compile(r"[B,I]-(.*)")
