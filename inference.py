@@ -14,7 +14,6 @@ from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
-from utils import ConfusionMatrixCallback
 from argparse import Namespace
 from PIL import Image, ImageDraw, ImageFont
 import io
