@@ -53,9 +53,14 @@ if __name__ == '__main__':
     for k in ["limit_test_batches"]:
         if k in old_config:
             del old_config[k]
+    if "gpus" in old_config:
+        del old_config["gpus"]
     old_args=Namespace(**old_config)
     logger = WandbLogger(project=wandb_project,name=old_args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
-
+    old_args.accelerator="gpu"
+    old_args.devices=1
+    print("Reusing old config: ",old_args)
+    #sys.exit(0)
     #api = wandb.Api()
     
     lang_model_name=old_args.lang_model_name
