@@ -34,7 +34,7 @@ class HFNer_DataModule(pl.LightningDataModule):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
-        self.class_label_obj=hf_dataset["train"].features["ner_tags"].feature
+        #self.class_label_obj=hf_dataset["train"].features["ner_tags"].feature
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
         self.tokenizer = tokenizer
         self.num_workers=num_workers
@@ -49,6 +49,7 @@ class HFNer_DataModule(pl.LightningDataModule):
         self.only_with_mw_nes=only_with_mw_nes
         self.dl_train,int2str=self._getloader(self.train_data,self.batch_size)
         self.int2str["train"]=int2str
+        self.class_label_obj=self.dl_train.dataset.class_label_obj
         self.num_classes=self.dl_train.dataset.class_label_obj.num_classes
 
     def train_dataloader(self):
@@ -84,12 +85,13 @@ class HFNer_DataModule(pl.LightningDataModule):
         return type_freq
 
     def _getloader(self,data,batch_size):
+        split_class_label_obj=data.features["ner_tags"].feature
         int2str=None
         if self.tag_format=="IOB":
-            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
+            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
             int2str=ds.class_label_obj.int2str
         elif self.tag_format=="IO":
-            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
+            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
             int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),int2str
 
@@ -268,8 +270,10 @@ class HFNerIOBDataset(Dataset):
         return False
 
 class HFNerIO_to_IOB_Dataset(HFNerIOBDataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,only_multi_token_ne):
-        super().__init__(hf_examples,tokenizer,io_class_label_obj,only_multi_token_ne=only_multi_token_ne)
+    #ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
+    #self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes
+    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,only_with_mw_nes):
+        super().__init__(hf_examples,tokenizer,io_class_label_obj,only_with_mw_nes=only_with_mw_nes)
         io_names=io_class_label_obj.names.copy()
         b_names=[]
         for ii,io_name in enumerate(io_names):
