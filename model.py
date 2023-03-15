@@ -206,6 +206,8 @@ class LSHAC_NERModel(pl.LightningModule):
             #prediction. classify all predicted clusters
             clusters_to_classify=predicted_clusters
         logits=self._fw_classify(x,clusters_to_classify)
+        #clean up
+        del predicted_clusters
         return ls,clusters_to_classify,logits
 
     def class_criterion(self,logits:torch.Tensor, labels_ohe:torch.Tensor)->torch.Tensor:
@@ -300,6 +302,15 @@ class LSHAC_NERModel(pl.LightningModule):
                     #losses.append(self.class_criterion(logit,gt_class))
             losses.append(self.class_criterion(torch.stack(loss_logits),torch.stack(targets).to(self.device)))
         class_loss=torch.stack(losses).mean()
+        #clean up
+        del losses
+        del loss_logits
+        del targets
+        del gt_spans_batch
+        del gt_classes_ohe_batch
+        del all_gt_spans
+        del all_extra_spans
+        del all_word_ids
         return class_loss,ls_loss
 
     def training_step(self, batch, batch_idx):
