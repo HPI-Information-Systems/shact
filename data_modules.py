@@ -19,9 +19,9 @@ E_END="[E_END]"
 E_START_ID=None
 E_END_ID=None
 
-def get_tag_format(hf_dataset):
-    is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
-    is_iobes=all([n.startswith("B-") or n.startswith("I-") or n.startswith("E-") or n.startswith("S-") or n=="O" for n in hf_dataset["train"].features["ner_tags"].feature.names])
+def get_tag_format(hf_dataset, feature_name="ner_tags"):
+    is_iob=all([n.startswith("B-") or n.startswith("I-") or n=="O" for n in hf_dataset["train"].features[feature_name].feature.names])
+    is_iobes=all([n.startswith("B-") or n.startswith("I-") or n.startswith("E-") or n.startswith("S-") or n=="O" for n in hf_dataset["train"].features[feature_name].feature.names])
     if is_iob:
         return "IOB"
     elif is_iobes:
@@ -30,14 +30,14 @@ def get_tag_format(hf_dataset):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=False):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=False, feature_name="ner_tags"):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
-        #self.class_label_obj=hf_dataset["train"].features["ner_tags"].feature
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
         self.tokenizer = tokenizer
         self.num_workers=num_workers
+        self.feature_name=feature_name
         if self.num_workers is None or self.num_workers==0:
             self.num_workers=os.cpu_count()
         self.tag_format=tag_format
@@ -71,7 +71,7 @@ class HFNer_DataModule(pl.LightningDataModule):
         #estimate the frequency of each type from the training set
         type_freq=dict()
         for sentence in self.train_data:
-            for tag in sentence["ner_tags"]:
+            for tag in sentence[self.feature_name]:
                 tag_str=self.class_label_obj.int2str(tag)
                 regex=utils.regex_extract_type
                 match=regex.match(tag_str)
@@ -85,20 +85,20 @@ class HFNer_DataModule(pl.LightningDataModule):
         return type_freq
 
     def _getloader(self,data,batch_size):
-        split_class_label_obj=data.features["ner_tags"].feature
+        split_class_label_obj=data.features[self.feature_name].feature
         int2str=None
         if self.tag_format=="IOB":
-            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
+            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes, feature_name=self.feature_name)
             int2str=ds.class_label_obj.int2str
         elif self.tag_format=="IO":
-            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
+            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes, feature_name=self.feature_name)
             int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),int2str
 
 class HFNerIOBDataset(Dataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes, feature_name):
         super().__init__()
-        
+        self.feature_name=feature_name
         self.tokenizer=tokenizer
         self.class_label_obj=class_label_obj
         self._build_b_i_dict()
@@ -109,7 +109,7 @@ class HFNerIOBDataset(Dataset):
     def _contains_mw_ner(self,sentence):
         pairs=[[b,i] for b,i in self.b_i_dict.items()]
         for pair in pairs:
-            if self._is_sublist(pair,sentence["ner_tags"]):
+            if self._is_sublist(pair,sentence[self.feature_name]):
                 return True
         return False
 
@@ -205,7 +205,7 @@ class HFNerIOBDataset(Dataset):
         for example in batch:
             all_words.append(example["tokens"])
             all_ids.append(int(example["id"]))
-            all_tags.append(self._get_ner_tags(example["ner_tags"]))
+            all_tags.append(self._get_ner_tags(example[self.feature_name]))
 
         inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
         length=inputs.input_ids.shape[1]
@@ -272,8 +272,8 @@ class HFNerIOBDataset(Dataset):
 class HFNerIO_to_IOB_Dataset(HFNerIOBDataset):
     #ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
     #self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes
-    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,only_with_mw_nes):
-        super().__init__(hf_examples,tokenizer,io_class_label_obj,only_with_mw_nes=only_with_mw_nes)
+    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,only_with_mw_nes,feature_name):
+        super().__init__(hf_examples,tokenizer,io_class_label_obj,only_with_mw_nes=only_with_mw_nes,feature_name=feature_name)
         io_names=io_class_label_obj.names.copy()
         b_names=[]
         for ii,io_name in enumerate(io_names):
@@ -290,7 +290,7 @@ class HFNerIO_to_IOB_Dataset(HFNerIOBDataset):
         O_idx=self.class_label_obj.str2int("O")
         pairs=[[i,i] for i in range(self.class_label_obj.num_classes) if i!=O_idx]
         for pair in pairs:
-            if self._is_sublist(pair,sentence["ner_tags"]):
+            if self._is_sublist(pair,sentence[self.feature_name]):
                 return True
         return False
 

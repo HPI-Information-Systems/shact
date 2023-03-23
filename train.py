@@ -23,6 +23,7 @@ if __name__ == '__main__':
     parser.add_argument("--lang_model_name", default="bert-base-uncased", type=str, help="Transformers (Bert) model name")
     parser.add_argument("--dataset", default="wnut_17", type=str, help="HF Dataset to use")
     parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
+    parser.add_argument("--feature_name", default="ner_tags", type=str, help="Name of the feature to use")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
     parser.add_argument("--restart_ls", action="store_true", help="Restart the weights of the latent space")
     parser.add_argument("--patience",  default=5, type=int, help="Patience for early stopping")
@@ -66,9 +67,10 @@ if __name__ == '__main__':
         hf_dataset=load_dataset(args.dataset)            
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
-    dm=HFNer_DataModule(hf_dataset,tokenizer=tokenizer,batch_size=args.batch_size,num_workers=args.workers,tag_format=get_tag_format(hf_dataset),undersample_rate=args.undersample_rate,only_with_mw_nes=False)
+    dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
+        tag_format=get_tag_format(hf_dataset), undersample_rate=args.undersample_rate, only_with_mw_nes=False, feature_name=args.feature_name)
 
-    distance_fn=cosine_distance if args.distance=="cosine" else torch.cdist
+    distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
     ner_model = LSHAC_NERModel(transformers_model, classes=dm.class_label_obj, lr=args.lr,
                                ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, neg_sample_size=args.neg_sample_size)
