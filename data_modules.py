@@ -30,11 +30,12 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,only_with_mw_nes=False, feature_name="ner_tags"):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags"):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
+
         self.tokenizer = tokenizer
         self.num_workers=num_workers
         self.feature_name=feature_name
@@ -46,11 +47,11 @@ class HFNer_DataModule(pl.LightningDataModule):
             self.undersample_rate=undersample_rate
             indices_sample=random.sample(list(range(len(self.train_data))),round(undersample_rate*len(self.train_data)))
             self.train_data=self.train_data.select(indices_sample)
-        self.only_with_mw_nes=only_with_mw_nes
         self.dl_train,int2str=self._getloader(self.train_data,self.batch_size)
         self.int2str["train"]=int2str
         self.class_label_obj=self.dl_train.dataset.class_label_obj
         self.num_classes=self.dl_train.dataset.class_label_obj.num_classes
+
 
     def train_dataloader(self):
         # dl,int2str=self._getloader(self.train_data,self.batch_size)
@@ -88,22 +89,22 @@ class HFNer_DataModule(pl.LightningDataModule):
         split_class_label_obj=data.features[self.feature_name].feature
         int2str=None
         if self.tag_format=="IOB":
-            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes, feature_name=self.feature_name)
+            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name)
             int2str=ds.class_label_obj.int2str
         elif self.tag_format=="IO":
-            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj,only_with_mw_nes=self.only_with_mw_nes, feature_name=self.feature_name)
+            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj, feature_name=self.feature_name)
             int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),int2str
 
 class HFNerIOBDataset(Dataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes, feature_name):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name):
         super().__init__()
         self.feature_name=feature_name
         self.tokenizer=tokenizer
         self.class_label_obj=class_label_obj
         self._build_b_i_dict()
-        #remove empty sentences and sentences with only one token. If only_with_mw_nes is True, remove sentences with no MW_NES
-        self.raw_data=[sentence for sentence in hf_examples if (len(sentence["tokens"])>1 and ((not only_with_mw_nes) or self._contains_mw_ner(sentence)))]
+        #remove empty sentences and sentences with only one token.
+        self.raw_data=[sentence for sentence in hf_examples if (len(sentence["tokens"])>0)]
         print(f"loaded {len(self.raw_data)} sentences from the original {len(hf_examples)} sentences")
 
     def _contains_mw_ner(self,sentence):
@@ -272,8 +273,8 @@ class HFNerIOBDataset(Dataset):
 class HFNerIO_to_IOB_Dataset(HFNerIOBDataset):
     #ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
     #self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes
-    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,only_with_mw_nes,feature_name):
-        super().__init__(hf_examples,tokenizer,io_class_label_obj,only_with_mw_nes=only_with_mw_nes,feature_name=feature_name)
+    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,feature_name):
+        super().__init__(hf_examples,tokenizer,io_class_label_obj,feature_name=feature_name)
         io_names=io_class_label_obj.names.copy()
         b_names=[]
         for ii,io_name in enumerate(io_names):
