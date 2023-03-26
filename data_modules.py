@@ -30,12 +30,14 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags"):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",neg_sample_rate=1):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
 
+        self.orig_tag_format=get_tag_format(hf_dataset,feature_name)
+        self.neg_sample_rate=neg_sample_rate
         self.tokenizer = tokenizer
         self.num_workers=num_workers
         self.feature_name=feature_name
@@ -47,7 +49,7 @@ class HFNer_DataModule(pl.LightningDataModule):
             self.undersample_rate=undersample_rate
             indices_sample=random.sample(list(range(len(self.train_data))),round(undersample_rate*len(self.train_data)))
             self.train_data=self.train_data.select(indices_sample)
-        self.dl_train,int2str=self._getloader(self.train_data,self.batch_size)
+        self.dl_train,int2str=self._get_train_loader(self.train_data,self.batch_size)
         self.int2str["train"]=int2str
         self.class_label_obj=self.dl_train.dataset.class_label_obj
         self.num_classes=self.dl_train.dataset.class_label_obj.num_classes
@@ -59,12 +61,12 @@ class HFNer_DataModule(pl.LightningDataModule):
         return self.dl_train
 
     def val_dataloader(self):
-        dl,int2str=self._getloader(self.val_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.val_data,self.batch_size)
         self.int2str["val"]=int2str
         return dl
 
     def test_dataloader(self):
-        dl,int2str=self._getloader(self.test_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.test_data,self.batch_size)
         self.int2str["test"]=int2str
         return dl
 
@@ -85,40 +87,66 @@ class HFNer_DataModule(pl.LightningDataModule):
                     type_freq[type]+=1
         return type_freq
 
-    def _getloader(self,data,batch_size):
+    def _get_test_loader(self,data,batch_size):
         split_class_label_obj=data.features[self.feature_name].feature
-        int2str=None
-        if self.tag_format=="IOB":
-            ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name)
-            int2str=ds.class_label_obj.int2str
-        elif self.tag_format=="IO":
-            ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=split_class_label_obj, feature_name=self.feature_name)
-            int2str=ds.class_label_obj.int2str
+        ds=HFNerIOBDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, tag_format=self.orig_tag_format)
+        int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),int2str
 
-class HFNerIOBDataset(Dataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name):
+    def _get_train_loader(self,data,batch_size):
+        split_class_label_obj=data.features[self.feature_name].feature
+        ds=HFNerSpanDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, neg_sample_rate=self.neg_sample_rate, tag_format=self.orig_tag_format)
+        int2str=ds.class_label_obj.int2str
+        return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
+
+# class HFNerDatum():
+#     """
+#     One element of the training set
+#     """
+#     def __inint__(self, tokens, span, label):#, all_labels):
+#         self.tokens=tokens
+#         self.span=span
+#         self.label=label
+#         #self.all_labels=all_labels
+
+class HFNerDataset(Dataset):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, tag_format):
         super().__init__()
         self.feature_name=feature_name
         self.tokenizer=tokenizer
         self.class_label_obj=class_label_obj
+        if tag_format!="IOB":
+            if tag_format=="IO":
+                self.raw_data=[self._convert_examplo_io_to_iob(example) for example in hf_examples]
+                io_names=class_label_obj.names.copy()
+                b_names=[]
+                for ii,io_name in enumerate(io_names):
+                    if not io_name.startswith("I-") and io_name!="O":
+                        io_names[ii]="I-"+io_name
+                    if io_names[ii].startswith("I-"):
+                        b_names.append("B-"+io_names[ii][2:])
+                names=io_names+b_names
+                self.class_label_obj=ClassLabel(names=names)
         self._build_b_i_dict()
         #remove empty sentences and sentences with only one token.
         self.raw_data=[sentence for sentence in hf_examples if (len(sentence["tokens"])>0)]
         print(f"loaded {len(self.raw_data)} sentences from the original {len(hf_examples)} sentences")
 
-    def _contains_mw_ner(self,sentence):
-        pairs=[[b,i] for b,i in self.b_i_dict.items()]
-        for pair in pairs:
-            if self._is_sublist(pair,sentence[self.feature_name]):
-                return True
-        return False
-
-    def __len__(self):
-        return len(self.raw_data)
-
-    def __getitem__(self,idx):
-        return self.raw_data[idx]
+    def _convert_examplo_io_to_iob(self,example):
+        new_example=example.copy()
+        for k in new_example:
+            if k==self.feature_name:
+                new_example[k]=self._convert_io_to_iob(example[k])
+        return new_example
+    
+    def _convert_io_to_iob(self,raw_tags):
+        tags=raw_tags.copy()
+        prev_tag=None
+        for ii,tag in enumerate(tags):
+            if (prev_tag is not None) and prev_tag!=tag and tag in self.i_b_dict:
+                tags[ii]=self.i_b_dict[tag]
+            prev_tag=tag
+        return tags
 
     def _build_b_i_dict(self):
         self.b_i_dict=dict()
@@ -130,6 +158,87 @@ class HFNerIOBDataset(Dataset):
                 b_index=label_names.index("B-"+entity_type)
                 self.b_i_dict[b_index]=ii
                 self.i_b_dict[ii]=b_index
+
+
+class HFNerSpanDataset(HFNerDataset):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, neg_sample_rate, tag_format):
+        super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
+        self.span_data=self._broadcast_sentences_spans(self.raw_data, neg_sample_rate=neg_sample_rate)
+
+    def _broadcast_sentences_spans(self, raw_data, neg_sample_rate):
+        """
+        For each sentence in the list, create multiple sentences
+        each containing only one entity or no entity
+        """
+        new_sentences=[]
+        for raw_sentence in raw_data:
+            new_sentence=[]
+            tags=raw_sentence[self.feature_name]
+            #find spans of entities in the form o f min and max index
+            spans=[]
+            types=[]
+            for ii,tag in enumerate(tags):
+                if tag in self.b_i_dict:
+                    spans.append((ii,ii))
+                    types.append(tag)
+                elif tag in self.i_b_dict:
+                    spans[-1]=(spans[-1][0],ii)
+            for s,t in zip(spans,types):
+                new_sentence.append((raw_sentence["tokens"],s,t))
+            #get n random non-entity spans
+            n=len(raw_sentence["tokens"])
+            max_spans=n*(n+1)/2
+            potential_negative_spans=max_spans-len(spans)
+            num_neg_samples=min(neg_sample_rate,potential_negative_spans)
+            neg_spans=[]
+            while len(neg_spans)<num_neg_samples:
+                start=random.randint(0,n-1)
+                end=random.randint(start,n-1)
+                if (start,end) not in spans:
+                    neg_spans.append((start,end))
+                new_sentence.append((raw_sentence["tokens"],(start,end),0))
+            #new_sentence=(raw_sentence, new_sentence)
+            new_sentences.extend(new_sentence)
+        return new_sentences
+    
+    def __len__(self):
+        return len(self.span_data)
+    
+    def __getitem__(self,idx):
+        return self.span_data[idx]
+    
+    def collate_fn(self,batch):
+        all_words=[]
+        all_types=[]
+        all_spans=[]
+        all_word_ids=[]
+        all_masks=[]
+        for (tokens,span,type) in batch:
+            all_words.append(tokens)
+            all_spans.append(span)
+            all_types.append(type)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+        for ii,(min,max) in enumerate(all_spans):
+            words_ids=inputs.word_ids(ii)
+            words_ids_pad=[-1 if x is None else x for x in words_ids]
+            all_word_ids.append(words_ids_pad)
+            mask=[1 if x>=min and x<=max else 0 for x in words_ids_pad]
+            all_masks.append(mask)
+        return {"inputs":inputs,
+                "types":all_types,
+                "final_cluster_masks":all_masks,
+                "all_word_ids":all_word_ids}
+
+
+class HFNerIOBDataset(HFNerDataset):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, tag_format):
+        super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
+    
+    def __len__(self):
+        return len(self.raw_data)
+
+    def __getitem__(self,idx):
+        return self.raw_data[idx]
 
     def _get_ne_masks(self,tags,sentence_mask,num_masks=None,pad_value=-1,only_multi_token_ne=False):
         """
@@ -259,52 +368,7 @@ class HFNerIOBDataset(Dataset):
                 "inputs":inputs,
                 "labels":padded_tags,
                 "final_cluster_masks":ne_masks,
-                "all_word_ids":all_word_ids}
-
-    #function that checks if a list is a sublist of another list
-    def _is_sublist(self,sublist,list):
-        if len(sublist)>len(list):
-            return False
-        for ii in range(len(list)-len(sublist)+1):
-            if sublist==list[ii:ii+len(sublist)]:
-                return True
-        return False
-
-class HFNerIO_to_IOB_Dataset(HFNerIOBDataset):
-    #ds=HFNerIO_to_IOB_Dataset(data,self.tokenizer,io_class_label_obj=self.class_label_obj,only_with_mw_nes=self.only_with_mw_nes)
-    #self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,only_with_mw_nes
-    def __init__(self,hf_examples,tokenizer:Tokenizer,io_class_label_obj:ClassLabel,feature_name):
-        super().__init__(hf_examples,tokenizer,io_class_label_obj,feature_name=feature_name)
-        io_names=io_class_label_obj.names.copy()
-        b_names=[]
-        for ii,io_name in enumerate(io_names):
-            if not io_name.startswith("I-") and io_name!="O":
-                io_names[ii]="I-"+io_name
-            if io_names[ii].startswith("I-"):
-                b_names.append("B-"+io_names[ii][2:])
-        names=io_names+b_names
-        self.class_label_obj=ClassLabel(names=names)
-        self._build_b_i_dict()
-
-    #Override
-    def _contains_mw_ner(self,sentence):
-        O_idx=self.class_label_obj.str2int("O")
-        pairs=[[i,i] for i in range(self.class_label_obj.num_classes) if i!=O_idx]
-        for pair in pairs:
-            if self._is_sublist(pair,sentence[self.feature_name]):
-                return True
-        return False
-
-
-    #override _get_ner_tags. Converts IO to IOB
-    def _get_ner_tags(self,raw_tags):
-        tags=raw_tags.copy()
-        prev_tag=None
-        for ii,tag in enumerate(tags):
-            if (prev_tag is not None) and prev_tag!=tag and tag in self.i_b_dict:
-                tags[ii]=self.i_b_dict[tag]
-            prev_tag=tag
-        return tags
+                "all_word_ids":all_word_ids}    
 
 def include_special_tokens(model:BertModel,tokenizer:Tokenizer):
     global E_START_ID,E_END_ID
@@ -315,12 +379,17 @@ def include_special_tokens(model:BertModel,tokenizer:Tokenizer):
 
 if __name__=="__main__":
     from transformers import AutoTokenizer
-    tokenizer=AutoTokenizer.from_pretrained("bert-base-cased",use_fast=True)
+    tokenizer=AutoTokenizer.from_pretrained("prajjwal1/bert-tiny",use_fast=True)
     tokenizer.add_special_tokens({"additional_special_tokens":[E_START,E_END]})
     data=load_dataset("wnut_17")
     dm=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
     dl=dm.train_dataloader()
-    batch=iter(dl).next()
-    #first_elem=batch[0]
-    #print(first_elem)
-    print(batch)
+
+    for batch in dl:
+        print(batch)
+        break
+
+    dl_val=dm.val_dataloader()
+    for batch in dl_val:
+        print(batch)
+        break

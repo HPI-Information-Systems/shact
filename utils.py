@@ -96,5 +96,13 @@ def get_confusion_matrix(gt_spans:List[List[Tuple[Tuple[int, int], int, torch.Te
                     confusion_matrix[gt_type][pred_type]+=1
     return confusion_matrix
 
+def is_sublist(self,sublist,list):
+    if len(sublist)>len(list):
+        return False
+    for ii in range(len(list)-len(sublist)+1):
+        if sublist==list[ii:ii+len(sublist)]:
+            return True
+    return False
+
 
 regex_extract_type=re.compile(r"[B,I]-(.*)")
