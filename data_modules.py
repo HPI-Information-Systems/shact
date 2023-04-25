@@ -226,8 +226,8 @@ class HFNerSpanDataset(HFNerDataset):
             all_masks.append(mask)
         return {"inputs":inputs,
                 "types":all_types,
-                "final_cluster_masks":all_masks,
-                "all_word_ids":all_word_ids}
+                "final_cluster_masks":torch.tensor(all_masks,dtype=torch.long,device=inputs.input_ids.device),
+                "all_word_ids":torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)}
 
 
 class HFNerIOBDataset(HFNerDataset):
