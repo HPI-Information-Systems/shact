@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -13,6 +13,7 @@ from pytorch_lightning.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADER
 import json
 from transformers import BertModel
 import utils
+from typing import Generator, List, Optional, Union, Callable
 
 E_START="[E_START]"
 E_END="[E_END]"
@@ -30,14 +31,14 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",neg_sample_rate=1):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]]=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
 
         self.orig_tag_format=get_tag_format(hf_dataset,feature_name)
-        self.neg_sample_rate=neg_sample_rate
+        self.span_sampler_fn=span_sampler_fn
         self.tokenizer = tokenizer
         self.num_workers=num_workers
         self.feature_name=feature_name
@@ -54,6 +55,13 @@ class HFNer_DataModule(pl.LightningDataModule):
         self.class_label_obj=self.dl_train.dataset.class_label_obj
         self.num_classes=self.dl_train.dataset.class_label_obj.num_classes
 
+    def resample_train_dataloader(self, span_sampler_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]]=None) -> DataLoader:
+        """
+        Re creates the train dataloader with the new span sampler
+        """
+        self.span_sampler_fn=span_sampler_fn
+        self.dl_train,_=self._get_train_loader(self.train_data,self.batch_size)
+        return self.dl_train
 
     def train_dataloader(self):
         # dl,int2str=self._getloader(self.train_data,self.batch_size)
@@ -95,7 +103,7 @@ class HFNer_DataModule(pl.LightningDataModule):
 
     def _get_train_loader(self,data,batch_size):
         split_class_label_obj=data.features[self.feature_name].feature
-        ds=HFNerSpanDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, neg_sample_rate=self.neg_sample_rate, tag_format=self.orig_tag_format)
+        ds=HFNerSpanDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn, tag_format=self.orig_tag_format)
         int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
 
@@ -161,11 +169,11 @@ class HFNerDataset(Dataset):
 
 
 class HFNerSpanDataset(HFNerDataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, neg_sample_rate, tag_format):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, span_generator_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]], tag_format):
         super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
-        self.span_data=self._broadcast_sentences_spans(self.raw_data, neg_sample_rate=neg_sample_rate)
+        self.span_data=self._broadcast_sentences_spans(self.raw_data, span_generator_fn=span_generator_fn)
 
-    def _broadcast_sentences_spans(self, raw_data, neg_sample_rate):
+    def _broadcast_sentences_spans(self, raw_data, span_generator_fn):
         """
         For each sentence in the list, create multiple sentences
         each containing only one entity or no entity
@@ -189,14 +197,12 @@ class HFNerSpanDataset(HFNerDataset):
             n=len(raw_sentence["tokens"])
             max_spans=n*(n+1)/2
             potential_negative_spans=max_spans-len(spans)
-            num_neg_samples=min(neg_sample_rate,potential_negative_spans)
-            neg_spans=[]
-            while len(neg_spans)<num_neg_samples:
-                start=random.randint(0,n-1)
-                end=random.randint(start,n-1)
-                if (start,end) not in spans:
-                    neg_spans.append((start,end))
-                new_sentence.append((raw_sentence["tokens"],(start,end),0))
+            #num_neg_samples=min(neg_sample_rate,potential_negative_spans)
+            if span_generator_fn:
+                all_spans=span_generator_fn(raw_sentence["tokens"])
+                for a_span in all_spans:
+                    if a_span not in spans:
+                        new_sentence.append((raw_sentence["tokens"],a_span,0))
             #new_sentence=(raw_sentence, new_sentence)
             new_sentences.extend(new_sentence)
         return new_sentences

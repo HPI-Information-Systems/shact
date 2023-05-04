@@ -1,3 +1,5 @@
+import random
+from typing import Generator, List, Tuple
 import pytorch_lightning as pl
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
@@ -12,6 +14,17 @@ from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
+
+def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
+    """Sample 2*length+1 random spans from the text"""
+    yielded=set()
+    length=len(words)
+    for _ in range(2*length+1):
+        start=random.randint(0,len(words)-1)
+        end=random.randint(start,len(words)-1)
+        if (start,end) not in yielded:
+            yielded.add((start,end))
+            yield start,end
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
@@ -91,7 +104,8 @@ if __name__ == '__main__':
         warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
         warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
     else:
-        print("Skipping warmup")
+        print("Skipping warmup using random span sampler")
+        dm.resample_train_dataloader(span_sampler_fn=random_span_sampler)
 
     print("Starting training")
     ner_model.warmup=False
