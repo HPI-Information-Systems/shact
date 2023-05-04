@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -62,6 +62,14 @@ class HFNer_DataModule(pl.LightningDataModule):
         self.span_sampler_fn=span_sampler_fn
         self.dl_train,_=self._get_train_loader(self.train_data,self.batch_size)
         return self.dl_train
+    
+    def get_train_dataloder_for_eval(self) -> DataLoader:
+        """
+        Builds a dataloader for the training set that can be used for evaluation.
+        Is is useful for inference on the training set after warmup.
+        """
+        dl,_=self._get_test_loader(self.train_data,self.batch_size)
+        return dl
 
     def train_dataloader(self):
         # dl,int2str=self._getloader(self.train_data,self.batch_size)
@@ -179,7 +187,7 @@ class HFNerSpanDataset(HFNerDataset):
         each containing only one entity or no entity
         """
         new_sentences=[]
-        for raw_sentence in raw_data:
+        for raw_sentence in tqdm(raw_data,desc="Broadcasting sentences"):
             new_sentence=[]
             tags=raw_sentence[self.feature_name]
             #find spans of entities in the form o f min and max index
@@ -374,7 +382,9 @@ class HFNerIOBDataset(HFNerDataset):
                 "inputs":inputs,
                 "labels":padded_tags,
                 "final_cluster_masks":ne_masks,
-                "all_word_ids":all_word_ids}    
+                "all_word_ids":all_word_ids}
+    
+
 
 def include_special_tokens(model:BertModel,tokenizer:Tokenizer):
     global E_START_ID,E_END_ID

@@ -75,6 +75,20 @@ class LSHAC_NER_Prediction():
         assert len(seq_labels)==self.seq_length
         return seq_labels
     
+    def get_word_spans(self, clusters:List[Tuple[int,int]]=None)->List[Tuple[int,int]]:
+        """
+        returns all the clusters as word spans
+        """
+        if clusters is None:
+            clusters=self.clusters
+        word_spans=[]
+        for (s,e) in clusters:
+            min_ix=self.word_ids[s]
+            max_ix=self.word_ids[e]
+            word_spans.append((min_ix,max_ix))
+        return word_spans
+
+    
     def get_pydot_tree(self, flat=False):
         import pydot
         assign=self.flat_assignments if flat else self.assignments

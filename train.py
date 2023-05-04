@@ -1,5 +1,5 @@
 import random
-from typing import Generator, List, Tuple
+from typing import Callable, Generator, List, Tuple
 import pytorch_lightning as pl
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
@@ -14,6 +14,10 @@ from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
+from utils import build_tensors_for_inference
+from transformers import PreTrainedTokenizerFast
+#disable tokenizers parallelism
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
     """Sample 2*length+1 random spans from the text"""
@@ -25,6 +29,18 @@ def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
         if (start,end) not in yielded:
             yielded.add((start,end))
             yield start,end
+
+def get_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenizerFast) -> Callable[[List[str]],Generator[Tuple[int,int],None,None]]:
+    def generator(words:List[str]):
+        #run inference
+        uni_batch=build_tensors_for_inference(words=words, tokenizer=tokenizer)
+        preds,_=model.predict(uni_batch)
+        pred=preds[0]
+        word_spans=pred.get_word_spans()
+        # yield all spans in the clusters
+        for span in word_spans:
+            yield span
+    return generator
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
@@ -103,6 +119,10 @@ if __name__ == '__main__':
             param.requires_grad = False
         warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
         warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+        print("Warmup done")
+        print("Resampling train dataloader using LS span sampler")
+        dm.resample_train_dataloader(span_sampler_fn=get_ls_span_generator(ner_model,tokenizer))
+        print("Resampling done")
     else:
         print("Skipping warmup using random span sampler")
         dm.resample_train_dataloader(span_sampler_fn=random_span_sampler)

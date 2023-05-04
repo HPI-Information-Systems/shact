@@ -5,10 +5,20 @@ import re
 import torch
 from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.loggers.wandb import WandbLogger
+from transformers import PreTrainedTokenizerFast
 
 def filter_kwargs(f:Callable, kwargs: Dict) -> Dict:
     argspec = inspect.getfullargspec(f)
     return {k: v for k, v in kwargs.items() if k in argspec.args}
+
+def build_tensors_for_inference(words:List[str],tokenizer:PreTrainedTokenizerFast) -> Dict[str,torch.Tensor]:
+    """
+    Prepares a sentence for inference, returns inputs and word_ids
+    """
+    inputs=tokenizer(words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+    word_ids=torch.tensor([inputs.word_ids()])
+    return {"inputs":inputs,
+            "all_word_ids":word_ids}
 
 def get_connectivity_matrix(word_ids:List[int]) -> np.ndarray:
     """
