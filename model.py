@@ -230,17 +230,32 @@ class LSHAC_NERModel(pl.LightningModule):
         loss=self.loss_fn(logits,labels_ohe) #F.cross_entropy(logits,labels_ohe)
         return loss
 
-    def ls_loss(self, ls_vectors:torch.Tensor, x:Dict) -> torch.Tensor:
+    def ls_loss(self, ls_vectors:torch.Tensor, x:Dict, types:torch.Tensor) -> torch.Tensor:
         """
         Computes the ltent space loss
         ls: latent space vectors of shape (batch_size,seq_len,ls_hidden_size)
         x: dict from 
         """
+        if isinstance(types,list):
+            types=torch.tensor(types).to(self.device)
         sentence_masks=(x["inputs"]["attention_mask"]-x["inputs"]["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
         clusters=x["final_cluster_masks"]
         clusters[clusters<=0]=0
-        ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
+        ls_vectors_filter=ls_vectors
+        clusters_filter=clusters
+        sentence_masks_filter=sentence_masks
+        if not self.warmup:
+            O_type_idx=self._get_type_idx(self.types.index("O"))
+            type_filter=types!=O_type_idx # filter out O labels
+            ls_vectors_filter=ls_vectors[type_filter]
+            clusters_filter=clusters[type_filter]
+            sentence_masks_filter=sentence_masks[type_filter]
+        assert ls_vectors_filter.shape[0]==clusters_filter.shape[0]
+        assert ls_vectors_filter.shape[0]==sentence_masks_filter.shape[0]
+        if ls_vectors_filter.shape[0]==0:
+            return None
+        ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)
         if not ls_loss1:
             return None
         return ls_loss1
@@ -276,12 +291,11 @@ class LSHAC_NERModel(pl.LightningModule):
         types=batch["types"]
         #y=batch["labels"]*inputs["attention_mask"]
         cluster_masks=batch["final_cluster_masks"]
-        all_word_ids=batch["all_word_ids"]
-        all_extra_spans=[]
         cluster_masks[cluster_masks<=0]=0
         cluster_spans=self.get_extra_spans(cluster_masks)
         ls_vectors,clusters,logits=self.forward(inputs,cluster_spans)
-        ls_loss=self.ls_loss(ls_vectors,batch)
+        #only compute ls_loss for entities
+        ls_loss=self.ls_loss(ls_vectors,batch,types)
         type_idxs=[self._get_type_idx(type) for type in types] if types else None
         class_loss=self.class_criterion(logits,type_idxs) if not self.warmup else None
         return class_loss,ls_loss
