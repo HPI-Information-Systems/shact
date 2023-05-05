@@ -1,6 +1,7 @@
 import random
-from typing import Callable, Generator, List, Tuple
+from typing import Callable, Generator, List, Tuple, Union
 import pytorch_lightning as pl
+from tqdm import tqdm
 from model import LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
@@ -9,7 +10,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os,re
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, get_tag_format, include_special_tokens
+from data_modules import HFNer_DataModule, HFNerIOBDataset, get_tag_format, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
@@ -30,7 +31,7 @@ def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
             yielded.add((start,end))
             yield start,end
 
-def get_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenizerFast) -> Callable[[List[str]],Generator[Tuple[int,int],None,None]]:
+def get_otf_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenizerFast) -> Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]:
     def generator(words:List[str]):
         #run inference
         uni_batch=build_tensors_for_inference(words=words, tokenizer=tokenizer)
@@ -119,9 +120,27 @@ if __name__ == '__main__':
             param.requires_grad = False
         warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
         warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+        dl_train_as_test=dm.get_train_dataloder_for_eval()
+        train_ds:HFNerIOBDataset=dl_train_as_test.dataset
+        partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test)
+        cached_results=dict()
+        for (predictions, batch) in tqdm(partial_res,"Processing warmup results"):
+            ids=batch["ids"]
+            for id,pred in zip(ids,predictions):
+                if isinstance(id,torch.Tensor):
+                    id=id.item()
+                cached_results[id]=pred # to int
+        del partial_res
         print("Warmup done")
         print("Resampling train dataloader using LS span sampler")
-        dm.resample_train_dataloader(span_sampler_fn=get_ls_span_generator(ner_model,tokenizer))
+        def get_cached_ls_span_generator(id:int):
+            pred=cached_results[id]
+            word_spans=pred.get_word_spans()
+            # yield all spans in the clusters
+            for span in word_spans:
+                yield span
+        dm.resample_train_dataloader(span_sampler_fn=get_cached_ls_span_generator)
+        del cached_results
         print("Resampling done")
     else:
         print("Skipping warmup using random span sampler")

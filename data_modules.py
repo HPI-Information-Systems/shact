@@ -1,4 +1,6 @@
+import inspect
 from typing import Dict, List, Optional, Tuple
+import typing
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -31,7 +33,7 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]]=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
@@ -146,6 +148,7 @@ class HFNerDataset(Dataset):
         self._build_b_i_dict()
         #remove empty sentences and sentences with only one token.
         self.raw_data=[sentence for sentence in hf_examples if (len(sentence["tokens"])>0)]
+        self.id_to_idx={example["id"]:ii for ii,example in tqdm(enumerate(self.raw_data),desc="building id_to_idx")}
         print(f"loaded {len(self.raw_data)} sentences from the original {len(hf_examples)} sentences")
 
     def _convert_examplo_io_to_iob(self,example):
@@ -177,7 +180,7 @@ class HFNerDataset(Dataset):
 
 
 class HFNerSpanDataset(HFNerDataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, span_generator_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]], tag_format):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]], tag_format):
         super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
         self.span_data=self._broadcast_sentences_spans(self.raw_data, span_generator_fn=span_generator_fn)
 
@@ -206,8 +209,20 @@ class HFNerSpanDataset(HFNerDataset):
             max_spans=n*(n+1)/2
             potential_negative_spans=max_spans-len(spans)
             #num_neg_samples=min(neg_sample_rate,potential_negative_spans)
+            by_id=False
             if span_generator_fn:
-                all_spans=span_generator_fn(raw_sentence["tokens"])
+                all_spans=[]
+                #check if the first argument of fn is an int by type hints
+                if len(inspect.signature(span_generator_fn).parameters)==1:
+                    type_hints=typing.get_type_hints(span_generator_fn)
+                    if len(type_hints)==1:
+                        par_type=list(typing.get_type_hints(span_generator_fn).values())[0]
+                        if par_type==int:
+                            by_id=True
+                if by_id:
+                    all_spans=span_generator_fn(int(raw_sentence["id"]))#Much faster if read from cache
+                else:
+                    all_spans=span_generator_fn(raw_sentence["tokens"])#This is much slower
                 for a_span in all_spans:
                     if a_span not in spans:
                         new_sentence.append((raw_sentence["tokens"],a_span,0))
