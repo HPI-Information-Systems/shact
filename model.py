@@ -200,18 +200,22 @@ class LSHAC_NERModel(pl.LightningModule):
         predicted_clusters=self._get_clusters(x,ls,word_ids)
         #prediction. classify all predicted clusters
         #dict with same keys as x but with values as empty lists
+        batch_size=x["input_ids"].shape[0]
+        #partition predicted clusters into batches
+        batched_predicted_clusters=[predicted_clusters[i:i+batch_size] for i in range(0,len(predicted_clusters),batch_size)]
         all_logits=[]
-        for i,sentence_clusters in enumerate(predicted_clusters):
-            inputs={}
-            for key in x.keys():
-                inputs[key]=[]
-            for (min,max) in sentence_clusters:
+        for batch_predicted_clusters in batched_predicted_clusters:
+            for i,sentence_clusters in enumerate(batch_predicted_clusters):
+                inputs={}
                 for key in x.keys():
-                    inputs[key].append(x[key][i])
-            for key in x.keys():
-                inputs[key]=torch.stack(inputs[key],dim=0)
-            logits=self._fw_classify(inputs,sentence_clusters)
-            all_logits.append(logits)
+                    inputs[key]=[]
+                for (min,max) in sentence_clusters:
+                    for key in x.keys():
+                        inputs[key].append(x[key][i])
+                for key in x.keys():
+                    inputs[key]=torch.stack(inputs[key],dim=0)
+                logits=self._fw_classify(inputs,sentence_clusters)
+                all_logits.append(logits)
         #convert to tensors
         
         #clean up
