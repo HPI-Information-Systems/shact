@@ -122,7 +122,7 @@ if __name__ == '__main__':
         warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
         dl_train_as_test=dm.get_train_dataloder_for_eval()
         train_ds:HFNerIOBDataset=dl_train_as_test.dataset
-        partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test)
+        partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test, )
         cached_results=dict()
         for (predictions, batch) in tqdm(partial_res,"Processing warmup results"):
             ids=batch["ids"]

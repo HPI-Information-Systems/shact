@@ -453,7 +453,10 @@ class LSHAC_NERModel(pl.LightningModule):
         for (sentence_clusters,cluster_logits,sentence_mask,word_ids_t) in zip(clusters,logits,sentence_masks,all_word_ids):
             word_ids=word_ids_t[sentence_mask==1].tolist()
             predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask,word_ids=word_ids))
-        return predictions, batch
+        ret_batch=batch
+        if self.warmup:
+            ret_batch={"ids":batch["ids"]}
+        return predictions, ret_batch
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
         return self.predict(batch)
