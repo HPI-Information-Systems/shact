@@ -8,14 +8,14 @@ class LSHAC_NER_Prediction():
         self.sentence_mask=sentence_mask.cpu()
         self.seq_length=self.sentence_mask.sum().item()
         self.clusters=clusters
-        self.logits=logits.cpu()
+        self.logits=torch.stack(logits).cpu()
         assert len(clusters)==len(logits)
         self.types_list=types_list
         self.assignments=[]
         self.confidence=[]
         self.prelim_not_entities=[]
         self.part_of_entities=[]
-        self.probs=torch.softmax(self.logits,dim=1)
+        self.probs=torch.softmax(torch.stack(logits),dim=1).cpu()
         for cluster,prob in zip(clusters,self.probs):
             class_ix=torch.argmax(prob).item()
             if class_ix!=types_list.index("O"):
