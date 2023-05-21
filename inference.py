@@ -87,10 +87,10 @@ if __name__ == '__main__':
     if old_args.sub_dataset:
         hf_dataset=load_dataset(old_args.dataset,old_args.sub_dataset)
     else:
-        hf_dataset=load_dataset(old_args.dataset)            
-    
+        hf_dataset=load_dataset(old_args.dataset)
+
     dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                          tag_format=get_tag_format(hf_dataset), only_with_mw_nes=False, feature_name=old_args.feature_name)
+                          tag_format=get_tag_format(hf_dataset), feature_name=old_args.feature_name)
     
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
