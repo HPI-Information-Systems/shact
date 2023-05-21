@@ -108,7 +108,7 @@ if __name__ == '__main__':
     assert ner_model is not None
         
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
-    dataloader_for_test=dm.val_dataloader()
+    #dataloader_for_test=dm.val_dataloader()
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
     for (predictions, batch) in tqdm(res):
         pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
