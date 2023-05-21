@@ -112,7 +112,7 @@ if __name__ == '__main__':
     #dataloader_for_test=dm.val_dataloader()
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
     trainer.test(ner_model,dataloaders=dataloader_for_test)
-    for (predictions, batch) in tqdm(res):
+    for (predictions, batch) in tqdm(res,desc="Processing predictions"):
         pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
         batch_images=[]
         for p,g,p_obj,input_ids in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"]):
