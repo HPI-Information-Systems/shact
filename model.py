@@ -424,7 +424,16 @@ class LSHAC_NERModel(pl.LightningModule):
             all_gt.extend(gt)
         
         res=self.seqeval_metric.compute(predictions=all_predictions, references=all_gt, zero_division=0)
-        self.log("metrics/test_f1",res["overall_f1"])
+        val_f1=res["overall_f1"]
+        self.log("metrics/test_f1",val_f1)
+        for k,v in res.items():
+            if type(v)==dict:
+                #per class performance
+                for k_,v_ in v.items():
+                    self.log(f"metrics/test_{k}_{k_}",float(v_))
+            else:
+                if k!="overall_f1" and type(v)==float or type(v)==int:
+                    self.log(f"metrics/test_{k}",float(v))
     
     def start_confusion_matrix(self):
         self.val_classification={
