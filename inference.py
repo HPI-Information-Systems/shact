@@ -121,6 +121,8 @@ if __name__ == '__main__':
                 
                 sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
                 tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
+                #remove artifacts
+                tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
                 is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
                 leaves=[node for node in tree.get_nodes() if is_leaf(node)]
                 for i,leaf in enumerate(leaves):
