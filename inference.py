@@ -80,6 +80,7 @@ if __name__ == '__main__':
     include_special_tokens(transformers_model,tokenizer)
 
     old_args.limit_predict_batches=args.limit
+    old_args.limit_test_batches=args.limit
 
     trainer=pl.Trainer.from_argparse_args(old_args,logger=logger,deterministic=True)
 
@@ -106,10 +107,11 @@ if __name__ == '__main__':
 
 
     assert ner_model is not None
-        
+    ner_model.warmup=False
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
     #dataloader_for_test=dm.val_dataloader()
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
+    trainer.test(ner_model,dataloaders=dataloader_for_test)
     for (predictions, batch) in tqdm(res):
         pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
         batch_images=[]
