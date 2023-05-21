@@ -33,6 +33,7 @@ if __name__ == '__main__':
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
     parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
+    parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
     parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
     #parser = pl.Trainer.add_argparse_args(parser)
     #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
@@ -110,55 +111,55 @@ if __name__ == '__main__':
     ner_model.warmup=False
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
     #dataloader_for_test=dm.val_dataloader()
-    res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
     trainer.test(ner_model,dataloaders=dataloader_for_test)
-    for (predictions, batch) in tqdm(res,desc="Processing predictions"):
-        pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
-        batch_images=[]
-        for p,g,p_obj,input_ids in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"]):
-            if p!=g:
-                tree=p_obj.get_pydot_tree()
-                
-                sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
-                tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
-                #remove artifacts
-                tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
-                is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
-                leaves=[node for node in tree.get_nodes() if is_leaf(node)]
-                for i,leaf in enumerate(leaves):
-                    span=eval(eval(leaf.get_name()))
-                    tokens_span=tokens[span[0]:span[1]+1]
-                    leaf.set_label(leaf.get_label()+"\n"+" ".join(tokens_span))
-                bytes_image = tree.create_png()
-                img=Image.open(io.BytesIO(bytes_image))
-                #resize to max 1024 width
-                img_w, img_h = img.size
-                if img_w>1024:
-                    img_h=int(img_h*1024/img_w)
-                    img_w=1024
-                    img=img.resize((img_w,img_h))
-                #draw = ImageDraw.Draw(image)
-                #font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
-                #tab_data=[["Pred"]+p,["GT"]+g]
-                #headers=[""]+[str(i) for i in range(len(p))]
-                #text=tabulate(tab_data, headers=headers, tablefmt="grid")
-                #draw.text((0,img_h), text, font=font, fill=(0,0,0))
-                html_p=vis.visualize(tokens,tags_iob=p)
-                png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
-                img_p=Image.open(io.BytesIO(png_p))
-                img_w_p, img_h_p = img_p.size
-                html_g=vis.visualize(tokens,tags_iob=g)
-                png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
-                img_g=Image.open(io.BytesIO(png_g))
-                img_w_g, img_h_g = img_g.size
-                image = Image.new('RGBA', (img_w, img_h+img_h_g+img_h_p), (255, 255, 255, 255))
-                image.paste(img, (0,0))
-                image.paste(img_g, (0,img_h))
-                image.paste(img_p, (0,img_h+img_h_g))
-                font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
-                draw = ImageDraw.Draw(image)
-                draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
-                draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
-                wandb.log({"test/trees":wandb.Image(image, caption=sentence)})    
+    if args.tree_type!="none":
+        res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
+        for (predictions, batch) in tqdm(res,desc="Processing predictions"):
+            pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+            batch_images=[]
+            for p,g,p_obj,input_ids in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"]):
+                if p!=g or args.tree_type=="all":
+                    tree=p_obj.get_pydot_tree()
+                    sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
+                    tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
+                    #remove artifacts
+                    tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
+                    is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
+                    leaves=[node for node in tree.get_nodes() if is_leaf(node)]
+                    for i,leaf in enumerate(leaves):
+                        span=eval(eval(leaf.get_name()))
+                        tokens_span=tokens[span[0]:span[1]+1]
+                        leaf.set_label(leaf.get_label()+"\n"+" ".join(tokens_span))
+                    bytes_image = tree.create_png()
+                    img=Image.open(io.BytesIO(bytes_image))
+                    #resize to max 1024 width
+                    img_w, img_h = img.size
+                    if img_w>1024:
+                        img_h=int(img_h*1024/img_w)
+                        img_w=1024
+                        img=img.resize((img_w,img_h))
+                    #draw = ImageDraw.Draw(image)
+                    #font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+                    #tab_data=[["Pred"]+p,["GT"]+g]
+                    #headers=[""]+[str(i) for i in range(len(p))]
+                    #text=tabulate(tab_data, headers=headers, tablefmt="grid")
+                    #draw.text((0,img_h), text, font=font, fill=(0,0,0))
+                    html_p=vis.visualize(tokens,tags_iob=p)
+                    png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
+                    img_p=Image.open(io.BytesIO(png_p))
+                    img_w_p, img_h_p = img_p.size
+                    html_g=vis.visualize(tokens,tags_iob=g)
+                    png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
+                    img_g=Image.open(io.BytesIO(png_g))
+                    img_w_g, img_h_g = img_g.size
+                    image = Image.new('RGBA', (img_w, img_h+img_h_g+img_h_p), (255, 255, 255, 255))
+                    image.paste(img, (0,0))
+                    image.paste(img_g, (0,img_h))
+                    image.paste(img_p, (0,img_h+img_h_g))
+                    font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
+                    draw = ImageDraw.Draw(image)
+                    draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
+                    draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
+                    wandb.log({"test/trees":wandb.Image(image, caption=sentence)})    
 
     
