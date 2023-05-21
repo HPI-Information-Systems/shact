@@ -37,7 +37,7 @@ class HFNer_DataModule(pl.LightningDataModule):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
-        self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset["test"]
+        self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset.get("test",None)
 
         self.orig_tag_format=get_tag_format(hf_dataset,feature_name)
         self.span_sampler_fn=span_sampler_fn
