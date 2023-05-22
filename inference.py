@@ -110,20 +110,29 @@ if __name__ == '__main__':
     assert ner_model is not None
     ner_model.warmup=False
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
+    dataset_for_test=dataloader_for_test.dataset
     #dataloader_for_test=dm.val_dataloader()
     trainer.test(ner_model,dataloaders=dataloader_for_test)
     if args.tree_type!="none":
         res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
         for (predictions, batch) in tqdm(res,desc="Processing predictions"):
             pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+            ids=batch["ids"]
+            pred_seq=[p.seq_labels_compressed for p in predictions]
+            gt_seq=[]
+            words=[]
+            for id in ids:
+                item=dataset_for_test[id]
+                words.append(item["tokens"])
+                gt_ints=item[old_args.feature_name]
+                gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_ints])
             batch_images=[]
-            for p,g,p_obj,input_ids in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"]):
+            for p,g,p_obj,input_ids,sentece_words in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words):
                 if p!=g or args.tree_type=="all":
                     tree=p_obj.get_pydot_tree()
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
                     tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
-                    #remove artifacts
-                    tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
+                    #tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
                     is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
                     leaves=[node for node in tree.get_nodes() if is_leaf(node)]
                     for i,leaf in enumerate(leaves):
@@ -144,11 +153,11 @@ if __name__ == '__main__':
                     #headers=[""]+[str(i) for i in range(len(p))]
                     #text=tabulate(tab_data, headers=headers, tablefmt="grid")
                     #draw.text((0,img_h), text, font=font, fill=(0,0,0))
-                    html_p=vis.visualize(tokens,tags_iob=p)
+                    html_p=vis.visualize(sentece_words,tags_iob=p)
                     png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
                     img_p=Image.open(io.BytesIO(png_p))
                     img_w_p, img_h_p = img_p.size
-                    html_g=vis.visualize(tokens,tags_iob=g)
+                    html_g=vis.visualize(sentece_words,tags_iob=g)
                     png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
                     img_g=Image.open(io.BytesIO(png_g))
                     img_w_g, img_h_g = img_g.size
