@@ -43,12 +43,7 @@ if __name__ == '__main__':
     #if use_wandb:
     api = wandb.Api()
     run = api.run(args.run_path)
-    if args.clean:
-        print("Deleting old files under media/images/test/")
-        for f in run.files():
-            if f.name.startswith("media/images/test/"):
-                f.delete()
-    wandb.init(id=run.id, project=wandb_project , resume="must")
+    #wandb.init(id=run.id, project=wandb_project , resume="must")
     old_config=run.config
     #delet limit keys
     for k in ["limit_test_batches"]:
@@ -57,7 +52,7 @@ if __name__ == '__main__':
     if "gpus" in old_config:
         del old_config["gpus"]
     old_args=Namespace(**old_config)
-    logger = WandbLogger(project=wandb_project,name=old_args.model_name,save_dir=os.path.join(out_folder,"wandb_checkpoints"))
+    save_dir=os.path.join(out_folder,"wandb_checkpoints")
     old_args.accelerator="gpu"
     old_args.devices=1
     print("Reusing old config: ",old_args)
@@ -96,7 +91,7 @@ if __name__ == '__main__':
     
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
-    ckpt_dir=os.path.join(logger.save_dir,run_spl[1],run_spl[2],"checkpoints")
+    ckpt_dir=os.path.join(save_dir,run_spl[1],run_spl[2],"checkpoints")
     if os.path.exists(ckpt_dir):
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
@@ -106,7 +101,6 @@ if __name__ == '__main__':
         print("No checkpoint found")
         exit(1)
 
-
     assert ner_model is not None
     ner_model.warmup=False
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
@@ -114,6 +108,9 @@ if __name__ == '__main__':
     #dataloader_for_test=dm.val_dataloader()
     trainer.test(ner_model,dataloaders=dataloader_for_test)
     if args.tree_type!="none":
+        imgs_folder=os.path.join(ckpt_dir,"imgs")
+        if not os.path.exists(imgs_folder):
+            os.makedirs(imgs_folder)
         res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
         with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
             pass
@@ -135,7 +132,7 @@ if __name__ == '__main__':
                         f.write(f"{w} {p}\n")
                     f.write("\n")
             batch_images=[]
-            for p,g,p_obj,input_ids,sentece_words in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words):
+            for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
                 if p!=g or args.tree_type=="all":
                     tree=p_obj.get_pydot_tree()
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
@@ -177,6 +174,9 @@ if __name__ == '__main__':
                     draw = ImageDraw.Draw(image)
                     draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
                     draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
-                    wandb.log({"test/trees":wandb.Image(image, caption=sentence)})    
+                    #save image to save_dir
+                    image.save(os.path.join(imgs_folder,"tree_"+str(id.item())+".png"))
+        print(f"Saved predictions to {os.path.join(ckpt_dir,f'pred.conll')}")
+        print("Images saved in",imgs_folder)
 
     
