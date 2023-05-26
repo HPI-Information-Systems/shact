@@ -99,7 +99,7 @@ if __name__ == '__main__':
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
     dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
-        tag_format=get_tag_format(hf_dataset), undersample_rate=args.undersample_rate, feature_name=args.feature_name)
+        tag_format=get_tag_format(hf_dataset,feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name)
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
