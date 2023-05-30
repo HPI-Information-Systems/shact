@@ -176,7 +176,8 @@ if __name__ == '__main__':
                     draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
                     #save image to save_dir
                     image.save(os.path.join(imgs_folder,"tree_"+str(id.item())+".png"))
-        print(f"Saved predictions to {os.path.join(ckpt_dir,f'pred.conll')}")
+    print(f"Saved predictions to {os.path.join(ckpt_dir,f'pred.conll')}")
+    if imgs_folder:
         print("Images saved in",imgs_folder)
 
     
