@@ -107,31 +107,31 @@ if __name__ == '__main__':
     dataset_for_test=dataloader_for_test.dataset
     #dataloader_for_test=dm.val_dataloader()
     trainer.test(ner_model,dataloaders=dataloader_for_test)
+    res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
+    with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
+        pass
     if args.tree_type!="none":
         imgs_folder=os.path.join(ckpt_dir,"imgs")
         if not os.path.exists(imgs_folder):
             os.makedirs(imgs_folder)
-        res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
-        with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
-            pass
-        for (predictions, batch) in tqdm(res,desc="Processing predictions"):
-            pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
-            ids=batch["ids"]
-            pred_seq=[p.seq_labels_compressed for p in predictions]
-            gt_seq=[]
-            words=[]
-            for id in ids:
-                item=dataset_for_test[id]
-                words.append(item["tokens"])
-                gt_ints=item[old_args.feature_name]
-                gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_ints])
-            with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
-                for id,ws,ps in zip(ids,words,pred_seq):
-                    f.write(f"#id: {id}\n")
-                    for w,p in zip(ws,ps):
-                        f.write(f"{w} {p}\n")
-                    f.write("\n")
-            batch_images=[]
+    for (predictions, batch) in tqdm(res,desc="Processing predictions"):
+        pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+        ids=batch["ids"]
+        pred_seq=[p.seq_labels_compressed for p in predictions]
+        gt_seq=[]
+        words=[]
+        for id in ids:
+            item=dataset_for_test[id]
+            words.append(item["tokens"])
+            gt_ints=item[old_args.feature_name]
+            gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_ints])
+        with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
+            for id,ws,ps in zip(ids,words,pred_seq):
+                f.write(f"#id: {id}\n")
+                for w,p in zip(ws,ps):
+                    f.write(f"{w} {p}\n")
+                f.write("\n")
+        if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
                 if p!=g or args.tree_type=="all":
                     tree=p_obj.get_pydot_tree()
