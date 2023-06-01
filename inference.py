@@ -110,6 +110,7 @@ if __name__ == '__main__':
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
     with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
         pass
+    imgs_folder=None
     if args.tree_type!="none":
         imgs_folder=os.path.join(ckpt_dir,"imgs")
         if not os.path.exists(imgs_folder):
