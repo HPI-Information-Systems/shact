@@ -121,13 +121,20 @@ if __name__ == '__main__':
         pred_seq=[p.seq_labels_compressed for p in predictions]
         gt_seq=[]
         words=[]
+        ds_ids=[]
         for id in ids:
             item=dataset_for_test[id]
+            if "sample_id" in item:
+                ds_ids.append(item["sample_id"])
+            elif "id" in item:
+                ds_ids.append(item["id"])
+            else:
+                ds_ids.append(id)
             words.append(item["tokens"])
             gt_ints=item[old_args.feature_name]
             gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_ints])
         with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
-            for id,ws,ps in zip(ids,words,pred_seq):
+            for id,ws,ps in zip(ds_ids,words,pred_seq):
                 f.write(f"#id: {id}\n")
                 for w,p in zip(ws,ps):
                     f.write(f"{w} {p}\n")
