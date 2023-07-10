@@ -263,7 +263,7 @@ class LSHAC_NERModel(pl.LightningModule):
         #ls_loss2,_ = hac_sl_ratio_loss_token_based(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
         #return ls_loss1+ls_loss2
     
-    def _get_entities_as_spans(self,clusters:torch.Tensor,labels:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
+    def _get_entities_as_spans_from_labels(self,clusters:torch.Tensor,labels:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
         """
         Converts clusters as masks and labels as IOB numeric labels to a list of spans
         Each span is a tuple of (min,max) indices, the type index and the one hot encoded type vector
@@ -285,12 +285,34 @@ class LSHAC_NERModel(pl.LightningModule):
                 classes_tensor_ohe[label_type_idx]=1
                 gt_spans_sentence.append(((min,max),label_type_idx,classes_tensor_ohe))
             gt_spans_batch.append(gt_spans_sentence)
+        return gt_spans_batch
+
+    def _get_entities_as_spans_from_batch(self,clusters:torch.Tensor,types:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
+        """
+        Converts clusters as masks and labels as IOB numeric labels to a list of spans
+        Each span is a tuple of (min,max) indices, the type index and the one hot encoded type vector
+        clusters: tensor of shape (batch_size,max clusters,seq_len)
+        labels: tensor of shape (batch_size,seq_len)
+        returns: list of list of spans
+        """
+        gt_spans_batch=[]
+        for gt_clusters,gt_types in zip(clusters,types):
+            gt_spans_sentence=[]
+            for gt_cluster,type in zip(gt_clusters,gt_types):
+                indices=torch.argwhere(gt_cluster==1).squeeze(-1)
+                if indices.shape[0]==0:
+                    continue
+                min=torch.min(indices).item()
+                max=torch.max(indices).item()
+                classes_tensor_ohe=torch.zeros(len(self.types))
+                classes_tensor_ohe[type]=1
+                gt_spans_sentence.append(((min,max),type,classes_tensor_ohe))
+            gt_spans_batch.append(gt_spans_sentence)
         return gt_spans_batch        
 
     def compute_losses(self, batch, batch_idx):
         inputs=batch["inputs"]
         types=batch["types"]
-        #y=batch["labels"]*inputs["attention_mask"]
         cluster_masks=batch["final_cluster_masks"]
         cluster_masks[cluster_masks<=0]=0
         cluster_spans=self.get_extra_spans(cluster_masks)
@@ -347,7 +369,7 @@ class LSHAC_NERModel(pl.LightningModule):
         
         #if using confusion matrix
         if self.val_classification is not None:
-            gt_spans=self._get_entities_as_spans(batch["final_cluster_masks"],batch["labels"])
+            gt_spans=self._get_entities_as_spans_from_labels(batch["final_cluster_masks"],batch["labels"])
             flatten_gt_types=[]
             flatten_predicted_types=[]
             for gt_spans_sentence,pred_obj in zip(gt_spans,prediction_objs):
@@ -489,23 +511,13 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
 
     def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
-        Computes the predicted and ground truth labels in the IOB format
+        Computes the predicted and ground truth spans
         batch: batch of data. Used for getting the ground truth labels
         prediction_objs: list of prediction objects
-        returns: tuple of predicted labels and ground truth labels
+        returns: tuple of predictedions and ground truth spans
         """
-        predictions=[obj.seq_labels for obj in prediction_objs]
-        gt=[]
-        labels=batch["labels"]
-        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
-        sentence_masks[sentence_masks<=0]=0
-        for i,(label_tensor,sentence_mask) in enumerate(zip(labels,sentence_masks)):
-            gt_sentence=[]
-            label_array=label_tensor[sentence_mask==1].tolist()
-            for label in label_array:
-                gt_sentence.append(self.orig_classes.int2str(label))
-            gt.append(gt_sentence)
-        return predictions,gt
+        gt_spans=self._get_entities_as_spans_from_batch(batch["final_cluster_masks"],batch["types"])
+        return prediction_objs,gt_spans
 
 class LSHAC_FlatNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,

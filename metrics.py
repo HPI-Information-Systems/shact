@@ -4,7 +4,7 @@ from typing import List, Tuple
 from evaluate import Metric
 
 class NestedNERMetric():
-    def compute(self, predictions:List[LSHAC_NER_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int]]]=None) -> dict | None:
+    def compute(self, predictions:List[LSHAC_NER_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int]]]=None,zero_division=0) -> dict | None:
         """
         Computes F1, precision and recall for nested NER
         """
@@ -26,9 +26,9 @@ class NestedNERMetric():
                     fn[span_type]+=1
         results=dict()
         for span_type in tp.keys():
-            precision=tp[span_type]/(tp[span_type]+fp[span_type])
-            recall=tp[span_type]/(tp[span_type]+fn[span_type])
-            f1=2*precision*recall/(precision+recall)
+            precision=tp[span_type]/(tp[span_type]+fp[span_type]) if (tp[span_type]+fp[span_type])>0 else zero_division
+            recall=tp[span_type]/(tp[span_type]+fn[span_type]) if (tp[span_type]+fn[span_type])>0 else zero_division
+            f1=2*precision*recall/(precision+recall) if (precision+recall)>0 else zero_division
             results[span_type]={"precision":precision,"recall":recall,"f1":f1}
         all_tp=sum(tp.values())
         all_fp=sum(fp.values())

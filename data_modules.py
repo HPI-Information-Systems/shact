@@ -533,16 +533,16 @@ class HFNestedNerDataset(Dataset):
             all_masks.append(s_entity_masks)
         padded_masks=torch.zeros((len(batch_data),max_entites,seq_len),dtype=torch.long,device=inputs.input_ids.device)
         #start padded tags with -100
-        padded_tags=torch.full((len(batch_data),max_entites),-100,dtype=torch.long,device=inputs.input_ids.device)
+        padded_types=torch.full((len(batch_data),max_entites),-100,dtype=torch.long,device=inputs.input_ids.device)
         all_word_ids=torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)
         for ii,s_entity_masks in enumerate(all_masks):
             for jj,mask in enumerate(s_entity_masks):
                 padded_masks[ii,jj,:]=torch.tensor(mask,dtype=torch.long,device=inputs.input_ids.device)
-                padded_tags[ii,jj]=all_entity_w_spans[ii][jj][2]
+                padded_types[ii,jj]=all_entity_w_spans[ii][jj][2]
         
         return {"ids":all_ids,
                 "inputs":inputs,
-                "labels":padded_tags,
+                "types":padded_types,
                 "final_cluster_masks":padded_masks,
                 "all_word_ids":all_word_ids}
     
