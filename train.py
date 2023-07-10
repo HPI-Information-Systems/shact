@@ -10,7 +10,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os,re
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, HFNerIOBDataset, get_tag_format, include_special_tokens
+from data_modules import HFNer_DataModule, HFNerIOBDataset,HFNestedNer_DataModule, get_tag_format, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
@@ -98,8 +98,14 @@ if __name__ == '__main__':
         hf_dataset=load_dataset(args.dataset)            
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
-    dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
+    dm=None
+    if args.dataset=="Rosenberg/genia":
+        #improve condition for any nested NER dataset
+        dm=HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,feature_name="entities")
+    else:
+        dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
         tag_format=get_tag_format(hf_dataset,feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name)
+    
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"

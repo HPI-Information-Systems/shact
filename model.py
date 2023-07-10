@@ -3,7 +3,6 @@ import pytorch_lightning as pl
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import f1_score
 import numpy as np
 from datasets import ClassLabel
 from transformers import BertModel
@@ -13,9 +12,9 @@ import data_modules as dm
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
 import evaluate
-import random
 from pytorch_lightning.loggers.wandb import WandbLogger
 from inference_model import LSHAC_NER_Prediction
+from metrics import NestedNERMetric
 
 
 #Pytorch lighning NER model with BERT as the underlying model
@@ -49,7 +48,6 @@ class LSHAC_NERModel(pl.LightningModule):
         except:
             #random id
             self.experiment_id=str(np.random.randint(1000000))
-        self.seqeval_metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
         self.val_classification=None
         self.neg_sample_size=neg_sample_size
         self.warmup=True
@@ -317,29 +315,18 @@ class LSHAC_NERModel(pl.LightningModule):
         self.log("losses/train_loss",loss)
         return loss
     
-    def compute_labels(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+    def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
         Computes the predicted and ground truth labels in the IOB format
         batch: batch of data. Used for getting the ground truth labels
         prediction_objs: list of prediction objects
         returns: tuple of predicted labels and ground truth labels
         """
-        predictions=[obj.seq_labels for obj in prediction_objs]
-        gt=[]
-        labels=batch["labels"]
-        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
-        sentence_masks[sentence_masks<=0]=0
-        for i,(label_tensor,sentence_mask) in enumerate(zip(labels,sentence_masks)):
-            gt_sentence=[]
-            label_array=label_tensor[sentence_mask==1].tolist()
-            for label in label_array:
-                gt_sentence.append(self.orig_classes.int2str(label))
-            gt.append(gt_sentence)
-        return predictions,gt
+        raise NotImplementedError
     
     def _test_batch(self, batch, prediction_objs):
-        predictions,gt=self.compute_labels(batch, prediction_objs)
-        res=self.seqeval_metric.compute(predictions=predictions, references=gt, zero_division=0)
+        predictions,gt=self.compute_results(batch, prediction_objs)
+        res=self.metric.compute(predictions=predictions, references=gt, zero_division=0)
         return predictions,gt,res
 
     def validation_step(self, batch, batch_idx):
@@ -396,7 +383,7 @@ class LSHAC_NERModel(pl.LightningModule):
         for (prediction_objs,prediction_labels,gt_labels) in outputs:
             self.val_pred_labels.extend(prediction_labels)
             self.val_gt_labels.extend(gt_labels)
-        res=self.seqeval_metric.compute(predictions=self.val_pred_labels, references=self.val_gt_labels, zero_division=0)
+        res=self.metric.compute(predictions=self.val_pred_labels, references=self.val_gt_labels, zero_division=0)
         val_f1=res["overall_f1"]
         self.log("metrics/val_f1",val_f1)
         for k,v in res.items():
@@ -423,7 +410,7 @@ class LSHAC_NERModel(pl.LightningModule):
             all_predictions.extend(pred)
             all_gt.extend(gt)
         
-        res=self.seqeval_metric.compute(predictions=all_predictions, references=all_gt, zero_division=0)
+        res=self.metric.compute(predictions=all_predictions, references=all_gt, zero_division=0)
         val_f1=res["overall_f1"]
         self.log("metrics/test_f1",val_f1)
         for k,v in res.items():
@@ -492,6 +479,68 @@ class LSHAC_NERModel(pl.LightningModule):
             extra_spans.append((min,max))
         return extra_spans
     
+class LSHAC_NestedNERModel(LSHAC_NERModel):
+    def __init__(self, transformer_model: BertModel,
+                 classes: ClassLabel,
+                 neg_sample_size:int,
+                 lr=1e-3,
+                 ls_hidden_size=128, 
+                 distance_fn: Callable = torch.cdist, 
+                 hac_metric=None,):
+        super().__init__(transformer_model,classes,lr,ls_hidden_size,distance_fn,hac_metric)
+        self.metric=NestedNERMetric()
+
+    def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+        """
+        Computes the predicted and ground truth labels in the IOB format
+        batch: batch of data. Used for getting the ground truth labels
+        prediction_objs: list of prediction objects
+        returns: tuple of predicted labels and ground truth labels
+        """
+        #TODO add support for nested labels
+        predictions=[obj.seq_labels for obj in prediction_objs]
+        gt=[]
+        labels=batch["labels"]
+        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
+        sentence_masks[sentence_masks<=0]=0
+        for i,(label_tensor,sentence_mask) in enumerate(zip(labels,sentence_masks)):
+            gt_sentence=[]
+            label_array=label_tensor[sentence_mask==1].tolist()
+            for label in label_array:
+                gt_sentence.append(self.orig_classes.int2str(label))
+            gt.append(gt_sentence)
+        return predictions,gt
+
+class LSHAC_FlatNERModel(LSHAC_NERModel):
+    def __init__(self, transformer_model: BertModel,
+                 classes: ClassLabel,
+                 neg_sample_size:int,
+                 lr=1e-3,
+                 ls_hidden_size=128, 
+                 distance_fn: Callable = torch.cdist, 
+                 hac_metric=None,):
+        super().__init__(transformer_model,classes,lr,ls_hidden_size,distance_fn,hac_metric)
+        self.metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
+
+    def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+        """
+        Computes the predicted and ground truth labels in the IOB format
+        batch: batch of data. Used for getting the ground truth labels
+        prediction_objs: list of prediction objects
+        returns: tuple of predicted labels and ground truth labels
+        """
+        predictions=[obj.seq_labels for obj in prediction_objs]
+        gt=[]
+        labels=batch["labels"]
+        sentence_masks=(batch["inputs"]["attention_mask"]-batch["inputs"]["special_tokens_mask"])
+        sentence_masks[sentence_masks<=0]=0
+        for i,(label_tensor,sentence_mask) in enumerate(zip(labels,sentence_masks)):
+            gt_sentence=[]
+            label_array=label_tensor[sentence_mask==1].tolist()
+            for label in label_array:
+                gt_sentence.append(self.orig_classes.int2str(label))
+            gt.append(gt_sentence)
+        return predictions,gt
 
 if __name__ == "__main__":
     from transformers import AutoTokenizer

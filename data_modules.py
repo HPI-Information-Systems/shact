@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, Dataset
 import os
 from torch.nn import ConstantPad1d
 from datasets import ClassLabel, load_dataset
+import datasets as hf_datasets
 from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
@@ -399,6 +400,213 @@ class HFNerIOBDataset(HFNerDataset):
                 "final_cluster_masks":ne_masks,
                 "all_word_ids":all_word_ids}
     
+class HFNestedNerSpanDataset(Dataset):
+    """
+    A class building sentences like Dataset froma nested NER dataset based on span start and end offsets
+    """
+    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset,tokenizer:Tokenizer,feature_name:str,span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]) -> None:
+        raw_data=hf_examples
+        self.feature_name=feature_name
+        self.sentences=self._broadcast_sentences_spans(raw_data,span_generator_fn)
+        self.tokenizer=tokenizer
+    
+    def _broadcast_sentences_spans(self, raw_data, span_generator_fn):
+        """
+        For each sentence in the list, create multiple sentences
+        each containing only one entity or no entity
+        """
+        new_sentences=[]
+        self.types=[]
+        for raw_sentence in tqdm(raw_data,desc="Broadcasting sentences"):
+            new_sentence=[]
+            entities=raw_sentence[self.feature_name]
+            #find spans of entities in the form o f min and max index
+            spans=["null_type"]
+            for ii,entity in enumerate(entities):
+                s_idx=entity["start"]
+                e_idx=entity["end"]
+                str_type=entity["type"]
+                if str_type not in self.types:
+                    self.types.append(str_type)
+                type=self.types.index(str_type)
+                s=(s_idx,e_idx-1)
+                new_sentence.append((raw_sentence["tokens"],s,type))
+            by_id=False
+            if span_generator_fn:
+                all_spans=[]
+                #check if the first argument of fn is an int by type hints
+                if len(inspect.signature(span_generator_fn).parameters)==1:
+                    type_hints=typing.get_type_hints(span_generator_fn)
+                    if len(type_hints)==1:
+                        par_type=list(typing.get_type_hints(span_generator_fn).values())[0]
+                        if par_type==int:
+                            by_id=True
+                all_spans=span_generator_fn(raw_sentence["tokens"])#This is much slower
+                for a_span in all_spans:
+                    if a_span not in spans:
+                        new_sentence.append((raw_sentence["tokens"],a_span,0))
+            new_sentences.extend(new_sentence)
+        return new_sentences
+    
+    def __len__(self):
+        return len(self.sentences)
+    
+    def __getitem__(self, idx):
+        return self.sentences[idx]
+    
+    def collate_fn(self,batch):
+        all_words=[]
+        all_types=[]
+        all_spans=[]
+        all_word_ids=[]
+        all_masks=[]
+        for (tokens,span,type) in batch:
+            all_words.append(tokens)
+            all_spans.append(span)
+            all_types.append(type)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+        for ii,(min,max) in enumerate(all_spans):
+            words_ids=inputs.word_ids(ii)
+            words_ids_pad=[-1 if x is None else x for x in words_ids]
+            all_word_ids.append(words_ids_pad)
+            mask=[1 if x>=min and x<=max else 0 for x in words_ids_pad]
+            all_masks.append(mask)
+        return {"inputs":inputs,
+                "types":all_types,
+                "final_cluster_masks":torch.tensor(all_masks,dtype=torch.long,device=inputs.input_ids.device),
+                "all_word_ids":torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)}
+
+class HFNestedNerDataset(Dataset):
+    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset, tokenizer:Tokenizer,feature_name:str="entities", types:Optional[List[str]]=None) -> None:
+        self.raw_data=hf_examples
+        self.feature_name=feature_name
+        self.tokenizer=tokenizer
+        if types is None:
+            self.types=["null_type"]
+            for raw_sentence in tqdm(self.raw_data,desc="Reading types"):
+                entities=raw_sentence[self.feature_name]
+                for entity in entities:
+                    str_type=entity["type"]
+                    if str_type not in self.types:
+                        self.types.append(str_type)
+        else:
+            self.types=types
+
+    def __len__(self):
+        return len(self.raw_data)
+    
+    def __getitem__(self, idx):
+        return (idx,self.raw_data[idx])
+    
+    def collate_fn(self,batch):
+        all_words=[]
+        all_ids=[i[0] for i in batch]
+        batch_data=[i[1] for i in batch]
+        all_entity_w_spans=[]
+        for example in batch_data:
+            all_words.append(example["tokens"])
+            entities=example[self.feature_name]
+            entities_w_spans=[]
+            for entity in entities:
+                str_type=entity["type"]
+                type=self.types.index(str_type)
+                span_s=entity["start"]
+                span_e=entity["end"]
+                entities_w_spans.append((span_s,span_e-1,type))
+            all_entity_w_spans.append(entities_w_spans)
+
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+        seq_len=inputs.input_ids.shape[1]
+
+        all_masks=[]
+        all_word_ids=[]
+        max_entites=0
+        for ii,w_spans in enumerate(all_entity_w_spans):
+            words_ids=inputs.word_ids(ii)
+            words_ids_pad=[-1 if x is None else x for x in words_ids]
+            all_word_ids.append(words_ids_pad)
+            max_entites=max(max_entites,len(w_spans))
+            s_entity_masks=[]
+            for (min_i,max_i,type) in w_spans:
+                mask=[1 if x>=min_i and x<=max_i else 0 for x in words_ids_pad]
+                s_entity_masks.append(mask)
+            all_masks.append(s_entity_masks)
+        padded_masks=torch.zeros((len(batch_data),max_entites,seq_len),dtype=torch.long,device=inputs.input_ids.device)
+        #start padded tags with -100
+        padded_tags=torch.full((len(batch_data),max_entites),-100,dtype=torch.long,device=inputs.input_ids.device)
+        all_word_ids=torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)
+        for ii,s_entity_masks in enumerate(all_masks):
+            for jj,mask in enumerate(s_entity_masks):
+                padded_masks[ii,jj,:]=torch.tensor(mask,dtype=torch.long,device=inputs.input_ids.device)
+                padded_tags[ii,jj]=all_entity_w_spans[ii][jj][2]
+        
+        return {"ids":all_ids,
+                "inputs":inputs,
+                "labels":padded_tags,
+                "final_cluster_masks":padded_masks,
+                "all_word_ids":all_word_ids}
+    
+class HFNestedNer_DataModule(pl.LightningDataModule):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None):
+        super().__init__()
+        self.tokenizer=tokenizer
+        self.batch_size=batch_size
+        self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset.get("test",None)
+        self.span_sampler_fn=span_sampler_fn
+        self.tokenizer = tokenizer
+        self.num_workers=num_workers
+        self.feature_name=feature_name
+        if self.num_workers is None or self.num_workers==0:
+            self.num_workers=os.cpu_count()
+        self.int2str=dict()
+        if undersample_rate:
+            self.undersample_rate=undersample_rate
+            indices_sample=random.sample(list(range(len(self.train_data))),round(undersample_rate*len(self.train_data)))
+            self.train_data=self.train_data.select(indices_sample)
+        self.dl_train,int2str=self._get_train_loader(self.train_data,self.batch_size)
+        self.int2str["train"]=int2str
+        self.class_label_obj=ClassLabel(names=int2str)
+        self.num_classes=len(self.int2str["train"])
+
+    def resample_train_dataloader(self, span_sampler_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]]=None) -> DataLoader:
+        """
+        Re creates the train dataloader with the new span sampler
+        """
+        self.span_sampler_fn=span_sampler_fn
+        self.dl_train,_=self._get_train_loader(self.train_data,self.batch_size)
+        return self.dl_train
+    
+    def get_train_dataloder_for_eval(self) -> DataLoader:
+        """
+        Builds a dataloader for the training set that can be used for evaluation.
+        Is is useful for inference on the training set after warmup.
+        """
+        dl,_=self._get_test_loader(self.train_data,self.batch_size)
+        return dl
+
+    def train_dataloader(self):
+        # dl,int2str=self._getloader(self.train_data,self.batch_size)
+        # self.int2str["train"]=int2str
+        return self.dl_train
+
+    def val_dataloader(self):
+        dl,int2str=self._get_test_loader(self.val_data,self.batch_size)
+        self.int2str["val"]=int2str
+        return dl
+
+    def test_dataloader(self):
+        dl,int2str=self._get_test_loader(self.test_data,self.batch_size)
+        self.int2str["test"]=int2str
+        return dl
+
+    def _get_test_loader(self,data,batch_size):
+        ds=HFNestedNerDataset(data,self.tokenizer,feature_name=self.feature_name, types=self.int2str["train"])
+        return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),self.int2str["train"]
+
+    def _get_train_loader(self,data,batch_size):
+        ds=HFNestedNerSpanDataset(data,self.tokenizer, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn)
+        int2str=ds.types
+        return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
 
 
 def include_special_tokens(model:BertModel,tokenizer:Tokenizer):
@@ -416,11 +624,11 @@ if __name__=="__main__":
     dm=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
     dl=dm.train_dataloader()
 
-    for batch in dl:
-        print(batch)
+    for batch_data in dl:
+        print(batch_data)
         break
 
     dl_val=dm.val_dataloader()
-    for batch in dl_val:
-        print(batch)
+    for batch_data in dl_val:
+        print(batch_data)
         break

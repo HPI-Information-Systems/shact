@@ -118,7 +118,7 @@ if __name__ == '__main__':
         with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
             pass
         for (predictions, batch) in tqdm(res,desc="Processing predictions"):
-            pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+            pred_seq,gt_seq=ner_model.compute_results(prediction_objs=predictions,batch=batch)
             ids=batch["ids"]
             pred_seq=[p.seq_labels_compressed for p in predictions]
             gt_seq=[]
