@@ -86,6 +86,34 @@ def get_potential_recall(clusters:List[List[Tuple[int,int]]], batch:Dict) -> Dic
         results[label_type_idx]=found[label_type_idx]/total[label_type_idx]
     return results
 
+def get_potential_recall_nested(clusters:List[List[Tuple[int,int]]], batch:Dict) -> Dict[int,float]:
+    """
+    Computes the potential recall of the clusters in the batch
+    :param clusters: List of tuples (start, end) of the clusters reuslting from HAC
+    :param batch: Dictionary with keys "all_word_ids", "final_cluster_masks", "labels" and "inputs"
+    """
+    #TODO refactor this function to avoid code duplication with get_potential_recall
+    results={}
+    found={}
+    total={}
+    for gt_clusters,gt_types,hac_clusters in zip(batch["final_cluster_masks"],batch["types"],clusters):
+        for gt_cluster,gt_type in zip(gt_clusters,gt_types):
+            indices=torch.argwhere(gt_cluster==1).squeeze(-1)
+            if indices.shape[0]==0:
+                continue
+            min=torch.min(indices).item()
+            max=torch.max(indices).item()
+            label_type_idx=gt_type.item()
+            if total.get(label_type_idx) is None:
+                total[label_type_idx]=0
+                found[label_type_idx]=0
+            total[label_type_idx]+=1
+            if (min,max) in hac_clusters:
+                found[label_type_idx]+=1
+    for label_type_idx in total.keys():
+        results[label_type_idx]=found[label_type_idx]/total[label_type_idx]
+    return results
+
 def get_confusion_matrix(gt_spans:List[List[Tuple[Tuple[int, int], int, torch.Tensor]]],predictions:List):
     """
     Computes the confusion matrix of the predictions

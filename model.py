@@ -304,6 +304,7 @@ class LSHAC_NERModel(pl.LightningModule):
                     continue
                 min=torch.min(indices).item()
                 max=torch.max(indices).item()
+                type=type.item()
                 classes_tensor_ohe=torch.zeros(len(self.types))
                 classes_tensor_ohe[type]=1
                 gt_spans_sentence.append(((min,max),type,classes_tensor_ohe))
@@ -362,7 +363,10 @@ class LSHAC_NERModel(pl.LightningModule):
         prediction_objs,_=self.predict(batch)
 
         prediction_labels,gt_labels,res=self._test_batch(batch,prediction_objs)
-        potential_recall=utils.get_potential_recall(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
+        pr_fn=utils.get_potential_recall
+        if "types" in batch:
+            pr_fn=utils.get_potential_recall_nested
+        potential_recall=pr_fn(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
         for k,v in potential_recall.items():
             class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
             self.log(f"metrics/val_{class_name}_potential_recall",v)
