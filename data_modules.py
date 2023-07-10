@@ -416,7 +416,7 @@ class HFNestedNerSpanDataset(Dataset):
         each containing only one entity or no entity
         """
         new_sentences=[]
-        self.types=[]
+        self.types=["O"]
         for raw_sentence in tqdm(raw_data,desc="Broadcasting sentences"):
             new_sentence=[]
             entities=raw_sentence[self.feature_name]

@@ -2,7 +2,7 @@ import random
 from typing import Callable, Generator, List, Tuple, Union
 import pytorch_lightning as pl
 from tqdm import tqdm
-from model import LSHAC_NERModel
+from model import LSHAC_NestedNERModel, LSHAC_FlatNERModel, LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
 import torch
@@ -99,18 +99,21 @@ if __name__ == '__main__':
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
     dm=None
+    model_class=None
     if args.dataset=="Rosenberg/genia":
         #improve condition for any nested NER dataset
         dm=HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,feature_name="entities")
+        model_class=LSHAC_NestedNERModel
     else:
         dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
         tag_format=get_tag_format(hf_dataset,feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name)
+        model_class=LSHAC_FlatNERModel
     
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
-    ner_model = LSHAC_NERModel(transformer_model, classes=dm.class_label_obj, lr=args.lr,
-                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, neg_sample_size=args.neg_sample_size)
+    ner_model = model_class(transformer_model, classes=dm.class_label_obj, lr=args.lr,
+                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric)
 
     assert ner_model is not None
     

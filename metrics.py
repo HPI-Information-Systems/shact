@@ -1,8 +1,9 @@
+from evaluate.info import EvaluationModuleInfo
 from inference_model import LSHAC_NER_Prediction
 from typing import List, Tuple
 from evaluate import Metric
 
-class NestedNERMetric(Metric):
+class NestedNERMetric():
     def compute(self, predictions:List[LSHAC_NER_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int]]]=None) -> dict | None:
         """
         Computes F1, precision and recall for nested NER

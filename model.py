@@ -21,7 +21,6 @@ from metrics import NestedNERMetric
 class LSHAC_NERModel(pl.LightningModule):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
-                 neg_sample_size:int,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
@@ -49,7 +48,6 @@ class LSHAC_NERModel(pl.LightningModule):
             #random id
             self.experiment_id=str(np.random.randint(1000000))
         self.val_classification=None
-        self.neg_sample_size=neg_sample_size
         self.warmup=True
 
     def save_hyperparameters(self,**kwargs):
@@ -482,7 +480,6 @@ class LSHAC_NERModel(pl.LightningModule):
 class LSHAC_NestedNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
-                 neg_sample_size:int,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
@@ -497,7 +494,6 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
         prediction_objs: list of prediction objects
         returns: tuple of predicted labels and ground truth labels
         """
-        #TODO add support for nested labels
         predictions=[obj.seq_labels for obj in prediction_objs]
         gt=[]
         labels=batch["labels"]
@@ -514,7 +510,6 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
 class LSHAC_FlatNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
-                 neg_sample_size:int,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
