@@ -130,26 +130,39 @@ if __name__ == '__main__':
         warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
         warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
         dl_train_as_test=dm.get_train_dataloder_for_eval()
-        train_ds:HFNerIOBDataset=dl_train_as_test.dataset
+        train_ds=dl_train_as_test.dataset
         partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test, )
-        cached_results=dict()
+        cached_results_by_id=dict()
+        cached_results_by_tokens=dict()
         for (predictions, batch) in tqdm(partial_res,"Processing warmup results"):
             ids=batch["ids"]
             for id,pred in zip(ids,predictions):
                 if isinstance(id,torch.Tensor):
                     id=id.item()
-                cached_results[id]=pred # to int
+                cached_results_by_id[id]=pred # to int
+                raw_data=train_ds.get_by_id(id)
+                tokens=raw_data["tokens"]
+                #hash concatentated tokens
+                tokens_key=" ".join(tokens)
+                cached_results_by_tokens[tokens_key]=pred
         del partial_res
         print("Warmup done")
         print("Resampling train dataloader using LS span sampler")
-        def get_cached_ls_span_generator(id:int):
-            pred=cached_results[id]
+        def get_cached_ls_span_generator_by_ids(id:int):
+            pred=cached_results_by_id[id]
             word_spans=pred.get_word_spans()
             # yield all spans in the clusters
             for span in word_spans:
                 yield span
-        dm.resample_train_dataloader(span_sampler_fn=get_cached_ls_span_generator)
-        del cached_results
+        def get_cached_ls_span_generator_by_tokens(tokens:List[str]):
+            tokens_key=" ".join(tokens)
+            pred=cached_results_by_tokens[tokens_key]
+            word_spans=pred.get_word_spans()
+            # yield all spans in the clusters
+            for span in word_spans:
+                yield span
+        dm.resample_train_dataloader(span_sampler_fn=get_cached_ls_span_generator_by_tokens)
+        del cached_results_by_id
         print("Resampling done")
     else:
         print("Skipping warmup using random span sampler")

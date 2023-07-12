@@ -263,12 +263,20 @@ class HFNerSpanDataset(HFNerDataset):
 class HFNerIOBDataset(HFNerDataset):
     def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, tag_format):
         super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
+        self.id_idx=dict()
+        for ii,ex in enumerate(self.raw_data):
+            self.id_idx[ex["id"]]=ii
     
     def __len__(self):
         return len(self.raw_data)
 
     def __getitem__(self,idx):
         return self.raw_data[idx]
+    
+    def get_by_id(self,id):
+        if id not in self.id_idx:
+            return None
+        return self.__getitem__(self.id_idx[id])
 
     def _get_ne_masks(self,tags,sentence_mask,num_masks=None,pad_value=-1,only_multi_token_ne=False):
         """
@@ -497,6 +505,9 @@ class HFNestedNerDataset(Dataset):
     
     def __getitem__(self, idx):
         return (idx,self.raw_data[idx])
+    
+    def get_by_id(self,id):
+        return self.__getitem__(id)[1]
     
     def collate_fn(self,batch):
         all_words=[]
