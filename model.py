@@ -1,3 +1,4 @@
+import os
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import pytorch_lightning as pl
 import torch.nn as nn
@@ -7,7 +8,7 @@ import numpy as np
 from datasets import ClassLabel
 from transformers import BertModel
 from sklearn.cluster import AgglomerativeClustering
-from clustering_model import compute_clusters
+from clustering_model import compute_clusters, compute_clusters_thread
 import data_modules as dm
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
@@ -15,6 +16,7 @@ import evaluate
 from pytorch_lightning.loggers.wandb import WandbLogger
 from inference_model import LSHAC_NER_Prediction
 from metrics import NestedNERMetric
+from multiprocessing import Pool
 
 
 #Pytorch lighning NER model with BERT as the underlying model
@@ -108,24 +110,32 @@ class LSHAC_NERModel(pl.LightningModule):
         sentence_masks=(x["attention_mask"]-x["special_tokens_mask"])
         sentence_masks[sentence_masks<=0]=0
         all_spans=[]
+        all_token_ls_vectors=[]
+        all_word_id_lists=[]
+        all_clustering_models=[]
+        all_token_indices=[]
         for i,ls_vectors in enumerate(ls):
             input_ids=x["input_ids"][i]
             sentence_mask=sentence_masks[i]
             token_indices=torch.argwhere(sentence_mask).squeeze(-1)
+            all_token_indices.append(token_indices)
             token_ls_vectors=ls_vectors[token_indices].detach().cpu().numpy()
             word_ids_list=word_ids[i].detach().cpu().numpy().tolist()
             projected_word_ids=word_ids[i][token_indices].detach().cpu().numpy().tolist()
             clustering_model=self._get_clustering_model(projected_word_ids)
-            
-            predicted_clusters=[{0}]
-            if len(token_ls_vectors)>1:
-                predicted_clusters=compute_clusters(clustering_model.fit(token_ls_vectors),word_ids_list)
+            all_token_ls_vectors.append(token_ls_vectors)
+            all_word_id_lists.append(word_ids_list)
+            all_clustering_models.append(clustering_model)
+        all_predicted_clusters=[]
+        with Pool(min(os.cpu_count(),len(all_clustering_models))) as p:
+            all_predicted_clusters=p.starmap(compute_clusters_thread,zip(all_clustering_models,all_token_ls_vectors,all_word_id_lists))
+        for predicted_clusters,token_indices in zip(all_predicted_clusters,all_token_indices):
             spans_set=set()
             for cluster in predicted_clusters:
                 cluster_indices=token_indices[list(cluster)].cpu().numpy()
-                min=cluster_indices.min()
-                max=cluster_indices.max()
-                spans_set.add((min,max))
+                min_ix=cluster_indices.min()
+                max_ix=cluster_indices.max()
+                spans_set.add((min_ix,max_ix))
             all_spans.append(spans_set)
         return all_spans
 
@@ -289,10 +299,10 @@ class LSHAC_NERModel(pl.LightningModule):
 
     def _get_entities_as_spans_from_batch(self,clusters:torch.Tensor,types:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
         """
-        Converts clusters as masks and labels as IOB numeric labels to a list of spans
+        Converts clusters as masks and types to a list of spans
         Each span is a tuple of (min,max) indices, the type index and the one hot encoded type vector
         clusters: tensor of shape (batch_size,max clusters,seq_len)
-        labels: tensor of shape (batch_size,seq_len)
+        types: tensor of shape (batch_size)
         returns: list of list of spans
         """
         gt_spans_batch=[]
@@ -373,7 +383,11 @@ class LSHAC_NERModel(pl.LightningModule):
         
         #if using confusion matrix
         if self.val_classification is not None:
-            gt_spans=self._get_entities_as_spans_from_labels(batch["final_cluster_masks"],batch["labels"])
+            gt_spans=None
+            if "labels" in batch:
+                gt_spans=self._get_entities_as_spans_from_labels(batch["final_cluster_masks"],batch["labels"])
+            else:
+                gt_spans=self._get_entities_as_spans_from_batch(batch["final_cluster_masks"],batch["types"])
             flatten_gt_types=[]
             flatten_predicted_types=[]
             for gt_spans_sentence,pred_obj in zip(gt_spans,prediction_objs):

@@ -42,6 +42,12 @@ def compute_clusters(clust_model:AgglomerativeClustering, word_ids:List[int])->L
             predicted_clusters.append(word_span)
     return predicted_clusters
 
+def compute_clusters_thread(clustering_model,token_ls_vectors,word_ids_list):
+    predicted_clusters=[{0}]
+    if len(token_ls_vectors)>1:
+        predicted_clusters=compute_clusters(clustering_model.fit(token_ls_vectors),word_ids_list)
+    return predicted_clusters
+
 def broken_word(word_ids:List[int], cluster:Set[int])->bool:
     """
     Checks if a cluster contains a broken word
