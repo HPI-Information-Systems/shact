@@ -405,7 +405,7 @@ class LSHAC_NERModel(pl.LightningModule):
                         flatten_predicted_types.append(pred_type)
                     predicted_spans.add((pred_start,pred_end))
                 for (gt_start,gt_end),gt_type in gt_dict.items():
-                    if (gt_start,gt_end) not in [x[0] for x in pred_obj.assignments]:
+                    if (gt_start,gt_end) not in predicted_spans:
                         flatten_gt_types.append(gt_type)
                         flatten_predicted_types.append(self.types.index("O"))
             
@@ -525,7 +525,7 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
                  distance_fn: Callable = torch.cdist, 
                  hac_metric=None,):
         super().__init__(transformer_model,classes,lr,ls_hidden_size,distance_fn,hac_metric)
-        self.metric=NestedNERMetric()
+        self.metric=NestedNERMetric(self.types)
 
     def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
