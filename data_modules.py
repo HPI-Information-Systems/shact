@@ -34,12 +34,12 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset.get("test",None)
-
+        self.limit_samples=limit_samples
         self.orig_tag_format=get_tag_format(hf_dataset,feature_name)
         self.span_sampler_fn=span_sampler_fn
         self.tokenizer = tokenizer
@@ -114,7 +114,7 @@ class HFNer_DataModule(pl.LightningDataModule):
 
     def _get_train_loader(self,data,batch_size):
         split_class_label_obj=data.features[self.feature_name].feature
-        ds=HFNerSpanDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn, tag_format=self.orig_tag_format)
+        ds=HFNerSpanDataset(data,self.tokenizer,class_label_obj=split_class_label_obj, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn, tag_format=self.orig_tag_format,limit_samples=self.limit_samples)
         int2str=ds.class_label_obj.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
 
@@ -181,8 +181,9 @@ class HFNerDataset(Dataset):
 
 
 class HFNerSpanDataset(HFNerDataset):
-    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]], tag_format):
+    def __init__(self,hf_examples,tokenizer:Tokenizer,class_label_obj:ClassLabel,feature_name, span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]], tag_format,limit_samples:int=None):
         super().__init__(hf_examples,tokenizer,class_label_obj,feature_name, tag_format)
+        self.limit_samples=limit_samples
         self.span_data=self._broadcast_sentences_spans(self.raw_data, span_generator_fn=span_generator_fn)
 
     def _broadcast_sentences_spans(self, raw_data, span_generator_fn):
@@ -226,7 +227,14 @@ class HFNerSpanDataset(HFNerDataset):
                     all_spans=span_generator_fn(raw_sentence["tokens"])#This is much slower
                 for a_span in all_spans:
                     if a_span not in spans:
-                        new_sentence.append((raw_sentence["tokens"],a_span,0))
+                        #check that it is not a subspan of an entity
+                        valid=True
+                        for span in spans:
+                            if span[0]<=a_span[0] and span[1]>=a_span[1]:
+                                valid=False
+                                break
+                        if valid:
+                            new_sentence.append((raw_sentence["tokens"],a_span,0))
             #new_sentence=(raw_sentence, new_sentence)
             new_sentences.extend(new_sentence)
         return new_sentences
@@ -412,11 +420,11 @@ class HFNestedNerSpanDataset(Dataset):
     """
     A class building sentences like Dataset froma nested NER dataset based on span start and end offsets
     """
-    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset,tokenizer:Tokenizer,feature_name:str,span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]],max_neg_samples:int=None) -> None:
+    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset,tokenizer:Tokenizer,feature_name:str,span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]],limit_samples:int=None) -> None:
         raw_data=hf_examples
         self.feature_name=feature_name
         self.tokenizer=tokenizer
-        self.max_neg_samples=max_neg_samples
+        self.limit_samples=limit_samples
         self.sentences=self._broadcast_sentences_spans(raw_data,span_generator_fn)
     
     def _broadcast_sentences_spans(self, raw_data, span_generator_fn):
@@ -452,7 +460,7 @@ class HFNestedNerSpanDataset(Dataset):
                 #             by_id=True
                 try:
                     gen_spans=span_generator_fn(raw_sentence["tokens"])
-                    while (self.max_neg_samples is None) or len(new_sentence)<self.max_neg_samples:
+                    while (self.limit_samples is None) or (len(new_sentence)-len(spans))<self.limit_samples:
                         next_span=next(gen_spans)
                         if next_span not in spans:
                             new_sentence.append((raw_sentence["tokens"],next_span,0))
@@ -565,7 +573,7 @@ class HFNestedNerDataset(Dataset):
                 "all_word_ids":all_word_ids}
     
 class HFNestedNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
@@ -581,6 +589,7 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
             self.undersample_rate=undersample_rate
             indices_sample=random.sample(list(range(len(self.train_data))),round(undersample_rate*len(self.train_data)))
             self.train_data=self.train_data.select(indices_sample)
+        self.limit_samples=limit_samples
         self.dl_train,int2str=self._get_train_loader(self.train_data,self.batch_size)
         self.int2str["train"]=int2str
         self.class_label_obj=ClassLabel(names=int2str)
@@ -622,7 +631,7 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),self.int2str["train"]
 
     def _get_train_loader(self,data,batch_size):
-        ds=HFNestedNerSpanDataset(data,self.tokenizer, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn)
+        ds=HFNestedNerSpanDataset(data,self.tokenizer, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn,limit_samples=self.limit_samples)
         int2str=ds.types
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
 
