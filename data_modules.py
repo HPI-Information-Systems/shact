@@ -412,11 +412,12 @@ class HFNestedNerSpanDataset(Dataset):
     """
     A class building sentences like Dataset froma nested NER dataset based on span start and end offsets
     """
-    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset,tokenizer:Tokenizer,feature_name:str,span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]) -> None:
+    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset,tokenizer:Tokenizer,feature_name:str,span_generator_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]],max_neg_samples:int=None) -> None:
         raw_data=hf_examples
         self.feature_name=feature_name
-        self.sentences=self._broadcast_sentences_spans(raw_data,span_generator_fn)
         self.tokenizer=tokenizer
+        self.max_neg_samples=max_neg_samples
+        self.sentences=self._broadcast_sentences_spans(raw_data,span_generator_fn)
     
     def _broadcast_sentences_spans(self, raw_data, span_generator_fn):
         """
@@ -429,7 +430,7 @@ class HFNestedNerSpanDataset(Dataset):
             new_sentence=[]
             entities=raw_sentence[self.feature_name]
             #find spans of entities in the form o f min and max index
-            spans=["null_type"]
+            spans=[]
             for ii,entity in enumerate(entities):
                 s_idx=entity["start"]
                 e_idx=entity["end"]
@@ -439,20 +440,25 @@ class HFNestedNerSpanDataset(Dataset):
                 type=self.types.index(str_type)
                 s=(s_idx,e_idx-1)
                 new_sentence.append((raw_sentence["tokens"],s,type))
+                spans.append(s)
             by_id=False
             if span_generator_fn:
-                all_spans=[]
                 #check if the first argument of fn is an int by type hints
-                if len(inspect.signature(span_generator_fn).parameters)==1:
-                    type_hints=typing.get_type_hints(span_generator_fn)
-                    if len(type_hints)==1:
-                        par_type=list(typing.get_type_hints(span_generator_fn).values())[0]
-                        if par_type==int:
-                            by_id=True
-                all_spans=span_generator_fn(raw_sentence["tokens"])#This is much slower
-                for a_span in all_spans:
-                    if a_span not in spans:
-                        new_sentence.append((raw_sentence["tokens"],a_span,0))
+                # if len(inspect.signature(span_generator_fn).parameters)==1:
+                #     type_hints=typing.get_type_hints(span_generator_fn)
+                #     if len(type_hints)==1:
+                #         par_type=list(typing.get_type_hints(span_generator_fn).values())[0]
+                #         if par_type==int:
+                #             by_id=True
+                try:
+                    gen_spans=span_generator_fn(raw_sentence["tokens"])
+                    while (self.max_neg_samples is None) or len(new_sentence)<self.max_neg_samples:
+                        next_span=next(gen_spans)
+                        if next_span not in spans:
+                            new_sentence.append((raw_sentence["tokens"],next_span,0))
+                except StopIteration:
+                    pass
+                    
             new_sentences.extend(new_sentence)
         return new_sentences
     
