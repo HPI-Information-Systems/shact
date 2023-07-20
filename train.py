@@ -112,7 +112,7 @@ if __name__ == '__main__':
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
-    ner_model = model_class(transformer_model, classes=dm.class_label_obj, lr=args.lr,
+    ner_model = model_class(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr,
                                ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric)
 
     assert ner_model is not None

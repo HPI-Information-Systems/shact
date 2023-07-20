@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from datasets import ClassLabel
 from transformers import BertModel
+from tokenizers import Tokenizer
 from sklearn.cluster import AgglomerativeClustering
 from clustering_model import compute_clusters, compute_clusters_thread
 import data_modules as dm
@@ -23,12 +24,14 @@ from multiprocessing import Pool
 class LSHAC_NERModel(pl.LightningModule):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
+                 tokenizer: Tokenizer,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
                  hac_metric=None,):
         super().__init__()
         self.transformer_model=transformer_model
+        self.tokenizer=tokenizer
         self.orig_classes=classes
         self.types=[]
         orig_label_names=self.orig_classes.names
@@ -173,7 +176,7 @@ class LSHAC_NERModel(pl.LightningModule):
         encoded_sentences=self._encode(input_ids=batched_input_ids,attention_mask=batched_attention_mask)
         vectors_class_concat=[]
         for (min,max),encoded_sentence in zip(clusters,encoded_sentences):#TODO optimize with tensor operations
-            vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max]],dim=-1)
+            vectors_class=torch.cat([encoded_sentence[min],encoded_sentence[max+2]],dim=-1) # +2 because of the start and end tokens manually added
             vectors_class_concat.append(vectors_class)
         vectors_class_concat_t=torch.stack(vectors_class_concat,dim=0)
         logits=self.fc_classif(vectors_class_concat_t)
@@ -520,11 +523,12 @@ class LSHAC_NERModel(pl.LightningModule):
 class LSHAC_NestedNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
+                 tokenizer: Tokenizer,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
                  hac_metric=None,):
-        super().__init__(transformer_model,classes,lr,ls_hidden_size,distance_fn,hac_metric)
+        super().__init__(transformer_model,classes,tokenizer,lr,ls_hidden_size,distance_fn,hac_metric)
         self.metric=NestedNERMetric(self.types)
 
     def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
@@ -540,11 +544,12 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
 class LSHAC_FlatNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,
                  classes: ClassLabel,
+                 tokenizer: Tokenizer,
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
                  hac_metric=None,):
-        super().__init__(transformer_model,classes,lr,ls_hidden_size,distance_fn,hac_metric)
+        super().__init__(transformer_model,classes,tokenizer,lr,ls_hidden_size,distance_fn,hac_metric)
         self.metric=evaluate.load("seqeval", experiment_id=self.experiment_id)#, zero_division=0)
 
     def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
@@ -567,19 +572,19 @@ class LSHAC_FlatNERModel(LSHAC_NERModel):
             gt.append(gt_sentence)
         return predictions,gt
 
-if __name__ == "__main__":
-    from transformers import AutoTokenizer
-    from transformers import AutoModel
-    import data_modules as dm
-    from data_modules import HFNer_DataModule
-    from datasets import load_dataset
-    import torch
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    model = AutoModel.from_pretrained("bert-base-uncased")
-    dm.include_special_tokens(model,tokenizer)
-    data=load_dataset("wnut_17")
-    data_module=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
-    ner_model=LSHAC_NERModel(model,classes=data_module.class_label_obj,lr=1e-3,ls_hidden_size=128,distance_fn=torch.cdist,hac_metric="euclidean")
-    val_data=data_module.val_dataloader()
-    batch=next(iter(val_data))
-    ner_model.validation_step(batch,0)
+# if __name__ == "__main__":
+#     from transformers import AutoTokenizer
+#     from transformers import AutoModel
+#     import data_modules as dm
+#     from data_modules import HFNer_DataModule
+#     from datasets import load_dataset
+#     import torch
+#     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+#     model = AutoModel.from_pretrained("bert-base-uncased")
+#     dm.include_special_tokens(model,tokenizer)
+#     data=load_dataset("wnut_17")
+#     data_module=HFNer_DataModule(data,tokenizer=tokenizer,batch_size=2)
+#     ner_model=LSHAC_NERModel(model,classes=data_module.class_label_obj,lr=1e-3,ls_hidden_size=128,distance_fn=torch.cdist,hac_metric="euclidean")
+#     val_data=data_module.val_dataloader()
+#     batch=next(iter(val_data))
+#     ner_model.validation_step(batch,0)
