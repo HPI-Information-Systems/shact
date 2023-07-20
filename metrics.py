@@ -21,16 +21,17 @@ class NestedNERMetric():
         fp=dict()
         fn=dict()
         for prediction,ref in zip(predictions,references):
+            ref_spans=set([(span,span_type) for (span,span_type,_) in ref])
             for (span,span_type) in prediction.assignments:
                 if span_type not in tp:
                     tp[span_type]=0
                     fp[span_type]=0
                     fn[span_type]=0
-                if (span,span_type) in ref:
+                if (span,span_type) in ref_spans:
                     tp[span_type]+=1
                 else:
                     fp[span_type]+=1
-            for (span,span_type,_) in ref:
+            for (span,span_type) in ref_spans:
                 if (span,span_type) not in prediction.assignments:
                     if span_type not in tp:
                         tp[span_type]=0
