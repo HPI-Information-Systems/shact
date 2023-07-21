@@ -104,18 +104,6 @@ if __name__ == '__main__':
     model_class=None
     if args.dataset == "Rosenberg/genia":
         #improve condition for any nested NER dataset
-        new_hf_dataset = dict()
-        for split in hf_dataset.keys():
-            new_ds_list = []
-            for ds in hf_dataset[split]:
-                d = dict()
-                d["tokens"] = ds["tokens"]
-                #convert all entities to entity
-                d["entities"] = [
-                    {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
-                new_ds_list.append(d)
-            new_hf_dataset[split] = new_ds_list
-        hf_dataset = new_hf_dataset
         dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
                                     feature_name="entities", limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
         model_class = LSHAC_NestedNERModel
