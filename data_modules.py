@@ -34,10 +34,11 @@ def get_tag_format(hf_dataset, feature_name="ner_tags"):
         return "IO"
 
 class HFNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,tag_format="IOB",undersample_rate=None,feature_name="ner_tags",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None,test_batch_size:int=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
+        self.test_batch_size=test_batch_size if test_batch_size else batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset.get("test",None)
         self.limit_samples=limit_samples
         self.orig_tag_format=get_tag_format(hf_dataset,feature_name)
@@ -71,7 +72,7 @@ class HFNer_DataModule(pl.LightningDataModule):
         Builds a dataloader for the training set that can be used for evaluation.
         Is is useful for inference on the training set after warmup.
         """
-        dl,_=self._get_test_loader(self.train_data,self.batch_size)
+        dl,_=self._get_test_loader(self.train_data,self.test_batch_size)
         return dl
 
     def train_dataloader(self):
@@ -80,12 +81,12 @@ class HFNer_DataModule(pl.LightningDataModule):
         return self.dl_train
 
     def val_dataloader(self):
-        dl,int2str=self._get_test_loader(self.val_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.val_data,self.test_batch_size)
         self.int2str["val"]=int2str
         return dl
 
     def test_dataloader(self):
-        dl,int2str=self._get_test_loader(self.test_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.test_data,self.test_batch_size)
         self.int2str["test"]=int2str
         return dl
 
@@ -573,10 +574,11 @@ class HFNestedNerDataset(Dataset):
                 "all_word_ids":all_word_ids}
     
 class HFNestedNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None, test_batch_size:int=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
+        self.test_batch_size=test_batch_size if test_batch_size else batch_size
         self.train_data, self.val_data, self.test_data = hf_dataset["train"], hf_dataset["validation"], hf_dataset.get("test",None)
         self.span_sampler_fn=span_sampler_fn
         self.tokenizer = tokenizer
@@ -608,7 +610,7 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         Builds a dataloader for the training set that can be used for evaluation.
         Is is useful for inference on the training set after warmup.
         """
-        dl,_=self._get_test_loader(self.train_data,self.batch_size)
+        dl,_=self._get_test_loader(self.train_data,self.test_batch_size)
         return dl
 
     def train_dataloader(self):
@@ -617,12 +619,12 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         return self.dl_train
 
     def val_dataloader(self):
-        dl,int2str=self._get_test_loader(self.val_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.val_data,self.test_batch_size)
         self.int2str["val"]=int2str
         return dl
 
     def test_dataloader(self):
-        dl,int2str=self._get_test_loader(self.test_data,self.batch_size)
+        dl,int2str=self._get_test_loader(self.test_data,self.test_batch_size)
         self.int2str["test"]=int2str
         return dl
 

@@ -55,6 +55,7 @@ if __name__ == '__main__':
     parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
     parser.add_argument("--feature_name", default="ner_tags", type=str, help="Name of the feature to use")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
+    parser.add_argument("--test_batch_size", type=int, help="batch size for validation and test")
     parser.add_argument("--restart_ls", action="store_true", help="Restart the weights of the latent space")
     parser.add_argument("--patience",  default=5, type=int, help="Patience for early stopping")
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
@@ -95,18 +96,32 @@ if __name__ == '__main__':
     if args.sub_dataset:
         hf_dataset=load_dataset(args.dataset,args.sub_dataset)
     else:
-        hf_dataset=load_dataset(args.dataset)            
+        hf_dataset=load_dataset(args.dataset)
+          
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
     dm=None
     model_class=None
-    if args.dataset=="Rosenberg/genia":
+    if args.dataset == "Rosenberg/genia":
         #improve condition for any nested NER dataset
-        dm=HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,feature_name="entities", limit_samples=args.limit_samples)
-        model_class=LSHAC_NestedNERModel
+        new_hf_dataset = dict()
+        for split in hf_dataset.keys():
+            new_ds_list = []
+            for ds in hf_dataset[split]:
+                d = dict()
+                d["tokens"] = ds["tokens"]
+                #convert all entities to entity
+                d["entities"] = [
+                    {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
+                new_ds_list.append(d)
+            new_hf_dataset[split] = new_ds_list
+        hf_dataset = new_hf_dataset
+        dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
+                                    feature_name="entities", limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+        model_class = LSHAC_NestedNERModel
     else:
         dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                              tag_format=get_tag_format(hf_dataset, feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name, limit_samples=args.limit_samples)
+                              tag_format=get_tag_format(hf_dataset, feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
         model_class = LSHAC_FlatNERModel
     
 
