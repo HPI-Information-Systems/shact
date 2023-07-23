@@ -339,13 +339,15 @@ class LSHAC_NERModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         class_loss,ls_loss=self.compute_losses(batch, batch_idx)
-        loss=torch.tensor(0.0).to(self.device)
+        loss=torch.tensor(0.0, requires_grad=True).to(self.device)
         if ls_loss:
             self.log("losses/train_ls_loss",ls_loss)
             loss+=ls_loss
         if class_loss:
             self.log("losses/train_class_loss",class_loss)
             loss+=class_loss
+        if loss==0.0:
+            return None
         self.log("losses/train_loss",loss)
         return loss
     
