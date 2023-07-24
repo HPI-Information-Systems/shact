@@ -65,6 +65,8 @@ if __name__ == '__main__':
     parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
     parser.add_argument("--limit_samples", type=int , help="Limit to the number of spans for sentence to use for training the classifier")
     parser.add_argument("--warmup_epochs", type=int , default=5, help="Number of non entity spans for sentence to use for training the classifier")
+    #boolean argument for only considering entity or non entity spans
+    parser.add_argument("--only_entities", action="store_true", help="Only consider entity spans")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
@@ -104,10 +106,24 @@ if __name__ == '__main__':
     model_class=None
     if args.dataset == "Rosenberg/genia":
         #improve condition for any nested NER dataset
+        if args.only_entities:
+            new_hf_dataset = dict()
+            for split in hf_dataset.keys():
+                new_ds_list = []
+                for ds in hf_dataset[split]:
+                    d = dict()
+                    d["tokens"] = ds["tokens"]
+                    #convert all entities to entity
+                    d["entities"] = [
+                        {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
+                    new_ds_list.append(d)
+                new_hf_dataset[split] = new_ds_list
+            hf_dataset = new_hf_dataset
         dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
                                     feature_name="entities", limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
         model_class = LSHAC_NestedNERModel
     else:
+        #TODO only_entities for flat ner
         dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
                               tag_format=get_tag_format(hf_dataset, feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
         model_class = LSHAC_FlatNERModel
