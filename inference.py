@@ -190,7 +190,8 @@ if __name__ == '__main__':
         if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
                 if args.tree_type=="all" or is_perfect_prediction(p_obj, g):
-                    tree=p_obj.get_pydot_tree()
+                    colors={t:c for t,c in zip(dm.class_label_obj.names,vis.generate_colors(len(dm.class_label_obj.names)))}
+                    tree=p_obj.get_pydot_tree(colors=colors)
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
                     tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
                     is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
@@ -209,7 +210,6 @@ if __name__ == '__main__':
                         img=img.resize((img_w,img_h))
                     #convert to List[Tuple[int,int,str]] spans
                     p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
-                    colors={t:c for t,c in zip(dm.class_label_obj.names,vis.generate_colors(len(dm.class_label_obj.names)))}
                     html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
                     png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
                     img_p=Image.open(io.BytesIO(png_p))
