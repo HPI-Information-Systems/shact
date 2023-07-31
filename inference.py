@@ -1,7 +1,9 @@
+from typing import List, Tuple
+from inference_model import LSHAC_NER_Prediction
 import pytorch_lightning as pl
 import datasets
 from tqdm import tqdm
-from model import LSHAC_NERModel
+from model import LSHAC_FlatNERModel, LSHAC_NERModel, LSHAC_NestedNERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
 import torch
@@ -9,7 +11,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os,re
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, include_special_tokens, get_tag_format
+from data_modules import HFNer_DataModule, HFNestedNer_DataModule, include_special_tokens, get_tag_format
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
@@ -20,6 +22,20 @@ import io
 from tabulate import tabulate
 import vis
 import imgkit
+
+def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,int]])->bool:
+    """
+    Checks if the prediction is perfect
+    """
+    w_assignments=prediction.get_word_assignments()
+    for (s,e,t) in gt:
+        not_found=True
+        for ((s2,e2),t2) in w_assignments:
+            if s==s2 and e==e2 and t==t2:
+                found=True
+        if not_found:
+            return False
+    return True
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
@@ -34,6 +50,7 @@ if __name__ == '__main__':
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
     parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
     parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
+    parser.add_argument("--save_conll", action="store_true", help="Save flat NER results in conll format")
     parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
     #parser = pl.Trainer.add_argparse_args(parser)
     #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
@@ -86,8 +103,28 @@ if __name__ == '__main__':
     else:
         hf_dataset=load_dataset(old_args.dataset)
 
-    dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                          tag_format=get_tag_format(hf_dataset,feature_name=old_args.feature_name), feature_name=old_args.feature_name)
+    if old_args.dataset == "Rosenberg/genia":
+        #improve condition for any nested NER dataset
+        if old_args.only_entities:
+            new_hf_dataset = dict()
+            for split in hf_dataset.keys():
+                new_ds_list = []
+                for ds in hf_dataset[split]:
+                    d = dict()
+                    d["tokens"] = ds["tokens"]
+                    #convert all entities to entity
+                    d["entities"] = [
+                        {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
+                    new_ds_list.append(d)
+                new_hf_dataset[split] = new_ds_list
+            hf_dataset = new_hf_dataset
+        dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, feature_name="entities", limit_samples=0)
+        model_class = LSHAC_NestedNERModel
+    else:
+        #TODO only_entities for flat ner
+        dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
+                              tag_format=get_tag_format(hf_dataset, feature_name=old_args.feature_name), feature_name=args.feature_name, limit_samples=0)
+        model_class = LSHAC_FlatNERModel
     
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
@@ -96,7 +133,7 @@ if __name__ == '__main__':
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
         ckpt=os.path.join(ckpt_dir,ckpt[-1])
-        ner_model = LSHAC_NERModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1)
+        ner_model = model_class.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer)
     else:
         print("No checkpoint found")
         exit(1)
@@ -118,7 +155,10 @@ if __name__ == '__main__':
     for (predictions, batch) in tqdm(res,desc="Processing predictions"):
         pred_seq,gt_seq=ner_model.compute_results(prediction_objs=predictions,batch=batch)
         ids=batch["ids"]
-        pred_seq=[p.seq_labels_compressed for p in predictions]
+        if type(ids)==torch.Tensor:
+            ids=ids.tolist()
+        if model_class==LSHAC_FlatNERModel:
+            pred_seq=[p.seq_labels_compressed for p in predictions]
         gt_seq=[]
         words=[]
         ds_ids=[]
@@ -130,22 +170,29 @@ if __name__ == '__main__':
                 ds_ids.append(item["id"])
             else:
                 ds_ids.append(id)
+            #if item is a tuple of 2 elements, the first is the id
+            if type(item)==tuple and len(item)==2:
+                item=item[1]
             words.append(item["tokens"])
-            gt_ints=item[old_args.feature_name]
-            gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_ints])
-        with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
-            for id,ws,ps in zip(ds_ids,words,pred_seq):
-                f.write(f"#id: {id}\n")
-                for w,p in zip(ws,ps):
-                    f.write(f"{w} {p}\n")
-                f.write("\n")
+            gt_raw=item[old_args.feature_name]
+            if type(ner_model)==LSHAC_FlatNERModel:
+                gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_raw])
+            elif type(ner_model)==LSHAC_NestedNERModel:
+                gt_spans=[(e["start"],e["end"]-1,e["type"]) for e in gt_raw]
+                gt_seq.append(gt_spans)
+        if args.save_conll:
+            with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
+                for id,ws,ps in zip(ds_ids,words,pred_seq):
+                    f.write(f"#id: {id}\n")
+                    for w,p in zip(ws,ps):
+                        f.write(f"{w} {p}\n")
+                    f.write("\n")
         if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
-                if p!=g or args.tree_type=="all":
+                if args.tree_type=="all" or is_perfect_prediction(p_obj, g):
                     tree=p_obj.get_pydot_tree()
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
                     tokens=tokenizer.convert_ids_to_tokens(input_ids, skip_special_tokens=True)
-                    #tokens=[tokenizer.convert_tokens_to_string(t).strip() for t in tokens]
                     is_leaf=lambda x: not any([edge.get_source()==x.get_name() for edge in tree.get_edges()])
                     leaves=[node for node in tree.get_nodes() if is_leaf(node)]
                     for i,leaf in enumerate(leaves):
@@ -160,17 +207,14 @@ if __name__ == '__main__':
                         img_h=int(img_h*1024/img_w)
                         img_w=1024
                         img=img.resize((img_w,img_h))
-                    #draw = ImageDraw.Draw(image)
-                    #font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
-                    #tab_data=[["Pred"]+p,["GT"]+g]
-                    #headers=[""]+[str(i) for i in range(len(p))]
-                    #text=tabulate(tab_data, headers=headers, tablefmt="grid")
-                    #draw.text((0,img_h), text, font=font, fill=(0,0,0))
-                    html_p=vis.visualize(sentece_words,tags_iob=p)
+                    #convert to List[Tuple[int,int,str]] spans
+                    p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
+                    colors={t:c for t,c in zip(dm.class_label_obj.names,vis.generate_colors(len(dm.class_label_obj.names)))}
+                    html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
                     png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
                     img_p=Image.open(io.BytesIO(png_p))
                     img_w_p, img_h_p = img_p.size
-                    html_g=vis.visualize(sentece_words,tags_iob=g)
+                    html_g=vis.visualize_spans(sentece_words,g, colors=colors)
                     png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
                     img_g=Image.open(io.BytesIO(png_g))
                     img_w_g, img_h_g = img_g.size
@@ -183,7 +227,7 @@ if __name__ == '__main__':
                     draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
                     draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
                     #save image to save_dir
-                    image.save(os.path.join(imgs_folder,"tree_"+str(id.item())+".png"))
+                    image.save(os.path.join(imgs_folder,"tree_"+str(id)+".png"))
     print(f"Saved predictions to {os.path.join(ckpt_dir,f'pred.conll')}")
     if imgs_folder:
         print("Images saved in",imgs_folder)

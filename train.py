@@ -119,8 +119,9 @@ if __name__ == '__main__':
                     new_ds_list.append(d)
                 new_hf_dataset[split] = new_ds_list
             hf_dataset = new_hf_dataset
+        args.feature_name="entities"
         dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                                    feature_name="entities", limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+                                    feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
         model_class = LSHAC_NestedNERModel
     else:
         #TODO only_entities for flat ner

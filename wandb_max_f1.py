@@ -17,7 +17,7 @@ def log_max_f1(run_path):
     for h in history:
         try:
             f1=h[F1_FIELD]
-            if f1 and (f1>max_f1 or max_f1 is None):
+            if f1 and (max_f1 is None or f1>max_f1):
                 max_f1=f1
         except KeyError:
             pass

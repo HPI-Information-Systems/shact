@@ -87,6 +87,14 @@ class LSHAC_NER_Prediction():
             max_ix=self.word_ids[e]
             word_spans.append((min_ix,max_ix))
         return word_spans
+    
+    def get_word_assignments(self) -> List[Tuple[Tuple[int,int],int]]:
+        """
+        assignments adjusted to word spans
+        """
+        assignment_clusters,assignment_types=zip(*self.assignments)
+        w_clusters=self.get_word_spans(assignment_clusters)
+        return zip(w_clusters,assignment_types)
 
     
     def get_pydot_tree(self, flat=False):
