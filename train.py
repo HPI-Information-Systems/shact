@@ -141,14 +141,17 @@ if __name__ == '__main__':
         logger.watch(ner_model)
         wandb.config.update(vars(args))
     
-    if args.warmup_epochs and args.warmup_epochs>0:
-        print("Starting warmup")
-        ner_model.warmup=True
-        #freeze backbone
-        for param in ner_model.transformer_model.parameters():
-            param.requires_grad = False
-        warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
-        warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+    if (args.warmup_epochs and args.warmup_epochs>0) or args.resume_from_checkpoint:
+        if (args.warmup_epochs and args.warmup_epochs>0):
+            print("Starting warmup")
+            ner_model.warmup=True
+            #freeze backbone
+            for param in ner_model.transformer_model.parameters():
+                param.requires_grad = False
+            warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
+            warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+        if args.resume_from_checkpoint:
+            warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False) # only load model for prediction
         dl_train_as_test=dm.get_train_dataloder_for_eval()
         train_ds=dl_train_as_test.dataset
         partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test, )
