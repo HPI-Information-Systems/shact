@@ -37,7 +37,13 @@ class LSHAC_NERModel(pl.LightningModule):
         orig_label_names=self.orig_classes.names
         self.types,self.class_type_mapping=self._get_types_mapping(self.orig_classes)
         self.ls_hidden_size=ls_hidden_size
-        self.fc_classif = nn.Linear(transformer_model.config.hidden_size*2, len(self.types)) # last one for not entities
+        #fc classif as a 2 layer mlp
+        self.fc_classif = nn.Sequential(
+            nn.Linear(transformer_model.config.hidden_size*2, self.ls_hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.ls_hidden_size, len(self.types)) # last one for not entities
+        )
+        #self.fc_classif = nn.Linear(transformer_model.config.hidden_size*2, len(self.types)) # last one for not entities
         full_hidden_size=transformer_model.config.hidden_size*(transformer_model.config.num_hidden_layers+1)
         self.ls_proj=nn.Linear(full_hidden_size,ls_hidden_size)
         self.lr=lr
