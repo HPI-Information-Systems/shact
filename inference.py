@@ -48,7 +48,7 @@ if __name__ == '__main__':
     parser.add_argument("run_path", type=str, help="Wandb run to use")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
-    parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
+    parser.add_argument("--workers", default=min(os.cpu_count(),64), type=int, help="Number of dataloader workers")
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
     parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
     parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
