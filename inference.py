@@ -1,3 +1,4 @@
+import json
 from typing import List, Tuple
 from inference_model import LSHAC_NER_Prediction
 import pytorch_lightning as pl
@@ -23,17 +24,18 @@ from tabulate import tabulate
 import vis
 import imgkit
 
-def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,int]])->bool:
+def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
     """
     Checks if the prediction is perfect
     """
     w_assignments=prediction.get_word_assignments()
     for (s,e,t) in gt:
-        not_found=True
+        type_index=prediction.types_list.index(t)
+        found=False
         for ((s2,e2),t2) in w_assignments:
-            if s==s2 and e==e2 and t==t2:
+            if s==s2 and e==e2 and type_index==t2:
                 found=True
-        if not_found:
+        if not found:
             return False
     return True
 
@@ -50,11 +52,15 @@ if __name__ == '__main__':
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
     parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
     parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
-    parser.add_argument("--save_conll", action="store_true", help="Save flat NER results in conll format")
+    parser.add_argument("--save_predictions", action="store_true", help="Save NER results in a file")
     parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
     #parser = pl.Trainer.add_argparse_args(parser)
     #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
+    #print args to stdout
+    print("Arguments:")
+    for k,v in vars(args).items():
+        print(f"{k}: {v}")
     pl.seed_everything(args.seed)
     logger=False
     #if use_wandb:
@@ -125,7 +131,7 @@ if __name__ == '__main__':
         dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
                               tag_format=get_tag_format(hf_dataset, feature_name=old_args.feature_name), feature_name=args.feature_name, limit_samples=0)
         model_class = LSHAC_FlatNERModel
-    
+    is_nested = isinstance(dm, HFNestedNer_DataModule)
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
     ckpt_dir=os.path.join(save_dir,run_spl[1],run_spl[2],"checkpoints")
@@ -145,8 +151,11 @@ if __name__ == '__main__':
     #dataloader_for_test=dm.val_dataloader()
     trainer.test(ner_model,dataloaders=dataloader_for_test)
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
-    with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
-        pass
+    suffix="test" if args.use_test else "val"
+    pred_file_name=os.path.join(ckpt_dir,f"pred_{suffix}.jsonl") if is_nested else os.path.join(ckpt_dir,f"pred_{suffix}.conll")
+    if args.save_predictions:
+        with open(pred_file_name,"w") as f:
+            pass
     imgs_folder=None
     if args.tree_type!="none":
         imgs_folder=os.path.join(ckpt_dir,"imgs")
@@ -157,7 +166,7 @@ if __name__ == '__main__':
         ids=batch["ids"]
         if type(ids)==torch.Tensor:
             ids=ids.tolist()
-        if model_class==LSHAC_FlatNERModel:
+        if not is_nested:
             pred_seq=[p.seq_labels_compressed for p in predictions]
         gt_seq=[]
         words=[]
@@ -180,16 +189,23 @@ if __name__ == '__main__':
             elif type(ner_model)==LSHAC_NestedNERModel:
                 gt_spans=[(e["start"],e["end"]-1,e["type"]) for e in gt_raw]
                 gt_seq.append(gt_spans)
-        if args.save_conll:
-            with open(os.path.join(ckpt_dir,f"pred.conll"),"a") as f:
+        if args.save_predictions:
+            with open(pred_file_name,"a") as f:
                 for id,ws,ps in zip(ds_ids,words,pred_seq):
-                    f.write(f"#id: {id}\n")
-                    for w,p in zip(ws,ps):
-                        f.write(f"{w} {p}\n")
-                    f.write("\n")
+                    if not is_nested:
+                        f.write(f"#id: {id}\n")
+                        for w,p in zip(ws,ps):
+                            f.write(f"{w} {p}\n")
+                        f.write("\n")
+                    else:
+                        #generate json
+                        json_obj={"id":id,"tokens":ws,"entities":[]}
+                        for ((s,e),t) in ps.get_word_assignments():
+                            json_obj["entities"].append({"start":s,"end":e+1,"type":ps.types_list[t]})
+                        f.write(json.dumps(json_obj)+"\n")
         if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
-                if args.tree_type=="all" or is_perfect_prediction(p_obj, g):
+                if args.tree_type=="all" or (not is_perfect_prediction(p_obj, g)):
                     colors={t:c for t,c in zip(dm.class_label_obj.names,vis.generate_colors(len(dm.class_label_obj.names)))}
                     tree=p_obj.get_pydot_tree(colors=colors)
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
@@ -228,7 +244,8 @@ if __name__ == '__main__':
                     draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
                     #save image to save_dir
                     image.save(os.path.join(imgs_folder,"tree_"+str(id)+".png"))
-    print(f"Saved predictions to {os.path.join(ckpt_dir,f'pred.conll')}")
+    if args.save_predictions:
+        print(f"Saved predictions to {pred_file_name}")
     if imgs_folder:
         print("Images saved in",imgs_folder)
 

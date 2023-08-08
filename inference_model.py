@@ -92,9 +92,11 @@ class LSHAC_NER_Prediction():
         """
         assignments adjusted to word spans
         """
+        if len(self.assignments)==0:
+            return []
         assignment_clusters,assignment_types=zip(*self.assignments)
         w_clusters=self.get_word_spans(assignment_clusters)
-        return zip(w_clusters,assignment_types)
+        return list(zip(w_clusters,assignment_types))
 
     
     def get_pydot_tree(self, flat=False, colors:Dict[str,str]={}):
