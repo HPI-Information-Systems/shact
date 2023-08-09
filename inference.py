@@ -2,7 +2,6 @@ import json
 from typing import List, Tuple
 from inference_model import LSHAC_NER_Prediction
 import pytorch_lightning as pl
-import datasets
 from tqdm import tqdm
 from model import LSHAC_FlatNERModel, LSHAC_NERModel, LSHAC_NestedNERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
@@ -10,19 +9,14 @@ from pytorch_lightning.loggers import WandbLogger
 import torch
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
-import os,re
+import os
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
 from data_modules import HFNer_DataModule, HFNestedNer_DataModule, include_special_tokens, get_tag_format
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
-from latent_space import cosine_distance
 from argparse import Namespace
-from PIL import Image, ImageDraw, ImageFont
-import io
-from tabulate import tabulate
 import vis
-import imgkit
 
 def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
     """
@@ -216,34 +210,26 @@ if __name__ == '__main__':
                         span=eval(eval(leaf.get_name()))
                         tokens_span=tokens[span[0]:span[1]+1]
                         leaf.set_label(leaf.get_label()+"\n"+" ".join(tokens_span))
-                    bytes_image = tree.create_png()
-                    img=Image.open(io.BytesIO(bytes_image))
-                    #resize to max 1024 width
-                    img_w, img_h = img.size
-                    if img_w>1024:
-                        img_h=int(img_h*1024/img_w)
-                        img_w=1024
-                        img=img.resize((img_w,img_h))
-                    #convert to List[Tuple[int,int,str]] spans
-                    p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
-                    html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
-                    png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
-                    img_p=Image.open(io.BytesIO(png_p))
-                    img_w_p, img_h_p = img_p.size
-                    html_g=vis.visualize_spans(sentece_words,g, colors=colors)
-                    png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
-                    img_g=Image.open(io.BytesIO(png_g))
-                    img_w_g, img_h_g = img_g.size
-                    image = Image.new('RGBA', (img_w, img_h+img_h_g+img_h_p), (255, 255, 255, 255))
-                    image.paste(img, (0,0))
-                    image.paste(img_g, (0,img_h))
-                    image.paste(img_p, (0,img_h+img_h_g))
-                    font = ImageFont.truetype("DejaVuSansMono.ttf", 12)
-                    draw = ImageDraw.Draw(image)
-                    draw.text((0,img_h), "Ground Truth", font=font, fill=(0,0,0))
-                    draw.text((0,img_h+img_h_g), "Prediction", font=font, fill=(0,0,0))
-                    #save image to save_dir
-                    image.save(os.path.join(imgs_folder,"tree_"+str(id)+".png"))
+                    bytes_svg = tree.create_svg() # Binary string
+                    #create html with hg
+                    with open(os.path.join(imgs_folder,"tree_"+str(id)+".html"),"w") as file:
+                        file.write("<!DOCTYPE html>\n")
+                        file.write("<html>\n")
+                        file.write("<head>\n")
+                        file.write("<title>My HTML Page</title>\n")
+                        file.write("</head>\n")
+                        file.write("<body>\n")
+                        file.write("<h1>Welcome to My HTML Page!</h1>\n")
+                        file.write(bytes_svg.decode("utf-8"))
+                        file.write("</body>\n")
+                        file.write("</html>\n")
+                        p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
+                        html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
+                        html_g=vis.visualize_spans(sentece_words,g, colors=colors)
+                        file.write("<h2>Prediction</h2>\n")
+                        file.write(html_p)
+                        file.write("<h2>Ground truth</h2>\n")
+                        file.write(html_g)
     if args.save_predictions:
         print(f"Saved predictions to {pred_file_name}")
     if imgs_folder:
