@@ -220,9 +220,6 @@ if __name__ == '__main__':
                         file.write("</head>\n")
                         file.write("<body>\n")
                         file.write(f"<h1>{str(id)}</h1>\n")
-                        file.write(bytes_svg.decode("utf-8"))
-                        file.write("</body>\n")
-                        file.write("</html>\n")
                         p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
                         html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
                         html_g=vis.visualize_spans(sentece_words,g, colors=colors)
@@ -230,6 +227,12 @@ if __name__ == '__main__':
                         file.write(html_p)
                         file.write("<h2>Ground truth</h2>\n")
                         file.write(html_g)
+                        file.write("<h2>Tree</h2>\n")
+                        file.write("<div>\n")
+                        file.write(bytes_svg.decode("utf-8"))
+                        file.write("</div>\n")
+                        file.write("</body>\n")
+                        file.write("</html>\n")
     if args.save_predictions:
         print(f"Saved predictions to {pred_file_name}")
     if imgs_folder:
