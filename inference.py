@@ -17,6 +17,7 @@ import wandb
 from dotenv import dotenv_values
 from argparse import Namespace
 import vis
+import re
 
 def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
     """
@@ -229,7 +230,12 @@ if __name__ == '__main__':
                         file.write(html_g)
                         file.write("<h2>Tree</h2>\n")
                         file.write("<div>\n")
-                        file.write(bytes_svg.decode("utf-8"))
+                        svg_str=bytes_svg.decode("utf-8")
+                        #replace width="\d+pt" height="\d+pt" with width="100%" using regex
+                        svg_str=re.sub(r'width="\d+pt" height="\d+pt"','width="1024pt"',svg_str)
+                        #remove everything before <svg
+                        svg_str=svg_str[svg_str.find("<svg"):]
+                        file.write(svg_str)
                         file.write("</div>\n")
                         file.write("</body>\n")
                         file.write("</html>\n")
