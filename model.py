@@ -9,7 +9,7 @@ from datasets import ClassLabel
 from transformers import BertModel
 from tokenizers import Tokenizer
 from sklearn.cluster import AgglomerativeClustering
-from clustering_model import compute_clusters, compute_clusters_thread
+from clustering_model import compute_clusters, compute_clusters_thread, get_word_spans
 import data_modules as dm
 from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
 import utils
@@ -138,10 +138,14 @@ class LSHAC_NERModel(pl.LightningModule):
         all_predicted_clusters=[]
         with Pool(min(os.cpu_count(),len(all_clustering_models))) as p:
             all_predicted_clusters=p.starmap(compute_clusters_thread,zip(all_clustering_models,all_token_ls_vectors,all_word_id_lists))
-        for predicted_clusters,token_indices in zip(all_predicted_clusters,all_token_indices):
+        for predicted_clusters,token_indices,word_id_list in zip(all_predicted_clusters,all_token_indices,all_word_id_lists):
             spans_set=set()
             for cluster in predicted_clusters:
-                cluster_indices=token_indices[list(cluster)].cpu().numpy()
+                cluster_as_token_indices=[]
+                word_spans=get_word_spans(word_id_list)
+                for ix in cluster:
+                    cluster_as_token_indices.extend(list(word_spans[ix]))
+                cluster_indices=token_indices[list(cluster_as_token_indices)].cpu().numpy()
                 min_ix=cluster_indices.min()
                 max_ix=cluster_indices.max()
                 spans_set.add((min_ix,max_ix))
