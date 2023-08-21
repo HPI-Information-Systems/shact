@@ -2,7 +2,7 @@ import random
 from typing import Callable, Generator, List, Tuple, Union
 import pytorch_lightning as pl
 from tqdm import tqdm
-from model import LSHAC_NERModel
+from model import LSHAC_NestedNERModel, LSHAC_FlatNERModel, LSHAC_NERModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
 import torch
@@ -10,7 +10,7 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os,re
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, HFNerIOBDataset, get_tag_format, include_special_tokens
+from data_modules import HFNer_DataModule, HFNerIOBDataset,HFNestedNer_DataModule, get_tag_format, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
@@ -24,10 +24,11 @@ def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
     """Sample 2*length+1 random spans from the text"""
     yielded=set()
     length=len(words)
-    for _ in range(2*length+1):
+    while len(yielded)<(2*length+1):
+        span_length=random.randint(1,length)#TODO favor shorter spans
         start=random.randint(0,len(words)-1)
-        end=random.randint(start,len(words)-1)
-        if (start,end) not in yielded:
+        end=start+span_length-1
+        if (start,end) not in yielded and end<len(words):
             yielded.add((start,end))
             yield start,end
 
@@ -39,6 +40,7 @@ def get_otf_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenize
         pred=preds[0]
         word_spans=pred.get_word_spans()
         # yield all spans in the clusters
+        # TODO favor shorter spans / shuffle the order
         for span in word_spans:
             yield span
     return generator
@@ -55,6 +57,7 @@ if __name__ == '__main__':
     parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
     parser.add_argument("--feature_name", default="ner_tags", type=str, help="Name of the feature to use")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
+    parser.add_argument("--test_batch_size", type=int, help="batch size for validation and test")
     parser.add_argument("--restart_ls", action="store_true", help="Restart the weights of the latent space")
     parser.add_argument("--patience",  default=5, type=int, help="Patience for early stopping")
     parser.add_argument("--lr", default=1e-3, type=float, help="Learning rate")
@@ -62,8 +65,10 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=os.cpu_count(), type=int, help="Number of dataloader workers")
     parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
-    parser.add_argument("--neg_sample_size", type=int , help="Number of non entity spans for sentence to use for training the classifier")
+    parser.add_argument("--limit_samples", type=int , help="Limit to the number of spans for sentence to use for training the classifier")
     parser.add_argument("--warmup_epochs", type=int , default=5, help="Number of non entity spans for sentence to use for training the classifier")
+    #boolean argument for only considering entity or non entity spans
+    parser.add_argument("--only_entities", action="store_true", help="Only consider entity spans")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
@@ -95,16 +100,42 @@ if __name__ == '__main__':
     if args.sub_dataset:
         hf_dataset=load_dataset(args.dataset,args.sub_dataset)
     else:
-        hf_dataset=load_dataset(args.dataset)            
+        hf_dataset=load_dataset(args.dataset)
+          
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
-    dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, 
-        tag_format=get_tag_format(hf_dataset,feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name)
+    dm=None
+    model_class=None
+    if args.dataset == "Rosenberg/genia":
+        #improve condition for any nested NER dataset
+        if args.only_entities:
+            new_hf_dataset = dict()
+            for split in hf_dataset.keys():
+                new_ds_list = []
+                for ds in hf_dataset[split]:
+                    d = dict()
+                    d["tokens"] = ds["tokens"]
+                    #convert all entities to entity
+                    d["entities"] = [
+                        {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
+                    new_ds_list.append(d)
+                new_hf_dataset[split] = new_ds_list
+            hf_dataset = new_hf_dataset
+        args.feature_name="entities"
+        dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
+                                    feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+        model_class = LSHAC_NestedNERModel
+    else:
+        #TODO only_entities for flat ner
+        dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
+                              tag_format=get_tag_format(hf_dataset, feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+        model_class = LSHAC_FlatNERModel
+    
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
-    ner_model = LSHAC_NERModel(transformer_model, classes=dm.class_label_obj, lr=args.lr,
-                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric, neg_sample_size=args.neg_sample_size)
+    ner_model = model_class(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr,
+                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric)
 
     assert ner_model is not None
     
@@ -112,35 +143,51 @@ if __name__ == '__main__':
         logger.watch(ner_model)
         wandb.config.update(vars(args))
     
-    if args.warmup_epochs and args.warmup_epochs>0:
-        print("Starting warmup")
-        ner_model.warmup=True
-        #freeze backbone
-        for param in ner_model.transformer_model.parameters():
-            param.requires_grad = False
-        warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
-        warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+    if (args.warmup_epochs and args.warmup_epochs>0) or args.resume_from_checkpoint:
+        if (args.warmup_epochs and args.warmup_epochs>0):
+            print("Starting warmup")
+            ner_model.warmup=True
+            #freeze backbone
+            for param in ner_model.transformer_model.parameters():
+                param.requires_grad = False
+            warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
+            warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader())
+        if args.resume_from_checkpoint:
+            warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False) # only load model for prediction
         dl_train_as_test=dm.get_train_dataloder_for_eval()
-        train_ds:HFNerIOBDataset=dl_train_as_test.dataset
+        train_ds=dl_train_as_test.dataset
         partial_res=warmup_trainer.predict(ner_model,dataloaders=dl_train_as_test, )
-        cached_results=dict()
+        cached_results_by_id=dict()
+        cached_results_by_tokens=dict()
         for (predictions, batch) in tqdm(partial_res,"Processing warmup results"):
             ids=batch["ids"]
             for id,pred in zip(ids,predictions):
                 if isinstance(id,torch.Tensor):
                     id=id.item()
-                cached_results[id]=pred # to int
+                cached_results_by_id[id]=pred # to int
+                raw_data=train_ds.get_by_id(id)
+                tokens=raw_data["tokens"]
+                #hash concatentated tokens
+                tokens_key=" ".join(tokens)
+                cached_results_by_tokens[tokens_key]=pred
         del partial_res
         print("Warmup done")
         print("Resampling train dataloader using LS span sampler")
-        def get_cached_ls_span_generator(id:int):
-            pred=cached_results[id]
+        def get_cached_ls_span_generator_by_ids(id:int):
+            pred=cached_results_by_id[id]
             word_spans=pred.get_word_spans()
             # yield all spans in the clusters
             for span in word_spans:
                 yield span
-        dm.resample_train_dataloader(span_sampler_fn=get_cached_ls_span_generator)
-        del cached_results
+        def get_cached_ls_span_generator_by_tokens(tokens:List[str]):
+            tokens_key=" ".join(tokens)
+            pred=cached_results_by_tokens[tokens_key]
+            word_spans=pred.get_word_spans()
+            # yield all spans in the clusters
+            for span in word_spans:
+                yield span
+        dm.resample_train_dataloader(span_sampler_fn=get_cached_ls_span_generator_by_tokens)
+        del cached_results_by_id
         print("Resampling done")
     else:
         print("Skipping warmup using random span sampler")

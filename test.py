@@ -118,7 +118,7 @@ if __name__ == '__main__':
         with open(os.path.join(ckpt_dir,f"pred.conll"),"w") as f:
             pass
         for (predictions, batch) in tqdm(res,desc="Processing predictions"):
-            pred_seq,gt_seq=ner_model.compute_labels(prediction_objs=predictions,batch=batch)
+            pred_seq,gt_seq=ner_model.compute_results(prediction_objs=predictions,batch=batch)
             ids=batch["ids"]
             pred_seq=[p.seq_labels_compressed for p in predictions]
             gt_seq=[]
@@ -161,11 +161,11 @@ if __name__ == '__main__':
                     #headers=[""]+[str(i) for i in range(len(p))]
                     #text=tabulate(tab_data, headers=headers, tablefmt="grid")
                     #draw.text((0,img_h), text, font=font, fill=(0,0,0))
-                    html_p=vis.visualize(sentece_words,tags_iob=p)
+                    html_p=vis.visualize_iob(sentece_words,tags_iob=p)
                     png_p=imgkit.from_string(html_p, False, options={"width":img_w, "quiet":None})
                     img_p=Image.open(io.BytesIO(png_p))
                     img_w_p, img_h_p = img_p.size
-                    html_g=vis.visualize(sentece_words,tags_iob=g)
+                    html_g=vis.visualize_iob(sentece_words,tags_iob=g)
                     png_g=imgkit.from_string(html_g, False, options={"width":img_w, "quiet":None})
                     img_g=Image.open(io.BytesIO(png_g))
                     img_w_g, img_h_g = img_g.size

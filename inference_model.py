@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 import torch
 
 class LSHAC_NER_Prediction():
@@ -87,9 +87,19 @@ class LSHAC_NER_Prediction():
             max_ix=self.word_ids[e]
             word_spans.append((min_ix,max_ix))
         return word_spans
+    
+    def get_word_assignments(self) -> List[Tuple[Tuple[int,int],int]]:
+        """
+        assignments adjusted to word spans
+        """
+        if len(self.assignments)==0:
+            return []
+        assignment_clusters,assignment_types=zip(*self.assignments)
+        w_clusters=self.get_word_spans(assignment_clusters)
+        return list(zip(w_clusters,assignment_types))
 
     
-    def get_pydot_tree(self, flat=False):
+    def get_pydot_tree(self, flat=False, colors:Dict[str,str]={}):
         import pydot
         assign=self.flat_assignments if flat else self.assignments
         #add single words
@@ -113,12 +123,16 @@ class LSHAC_NER_Prediction():
         assign_by_length_desc=sorted(assign,key=lambda t: (t[0][1]-t[0][0],-t[0][1]),reverse=False)
         assigned_spans=[x[0] for x in assign_by_length_desc]
         G=pydot.Dot(graph_type='digraph',strict=True)
+
         for a in sorted(assign,key=lambda t: (t[0][0],t[0][1]-t[0][0])):
             class_id=a[1]
-            color=class_id%12+1
+            color=colors[self.types_list[class_id]] if colors and self.types_list[class_id] in colors else "white"
             if class_id==self.types_list.index("O"):
                 color="white"
-            node=pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color, colorscheme="paired12")
+            else:
+                #convert from rgb(0,0,0) to #000000
+                color="#"+"".join([hex(int(x))[2:].zfill(2) for x in color[4:-1].split(",")])
+            node=pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color)
             G.add_node(node)
         already_added=[]
         while len(assign_by_length_desc)>0:
