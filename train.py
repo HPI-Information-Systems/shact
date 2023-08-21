@@ -24,10 +24,11 @@ def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
     """Sample 2*length+1 random spans from the text"""
     yielded=set()
     length=len(words)
-    for _ in range(2*length+1):
+    while len(yielded)<(2*length+1):
+        span_length=random.randint(1,length)#TODO favor shorter spans
         start=random.randint(0,len(words)-1)
-        end=random.randint(start,len(words)-1)
-        if (start,end) not in yielded:
+        end=start+span_length-1
+        if (start,end) not in yielded and end<len(words):
             yielded.add((start,end))
             yield start,end
 
@@ -39,6 +40,7 @@ def get_otf_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenize
         pred=preds[0]
         word_spans=pred.get_word_spans()
         # yield all spans in the clusters
+        # TODO favor shorter spans / shuffle the order
         for span in word_spans:
             yield span
     return generator
