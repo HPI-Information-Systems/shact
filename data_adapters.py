@@ -65,7 +65,7 @@ def conll03_adapter(source_dataset:DatasetDict) -> DatasetDict:
     target_dataset = DatasetDict()
 
     for split, dataset in source_dataset.items():
-        target_dataset[split] = dataset.map(map_batch, batched=True, remove_columns=["tokens","pos_tags", "chunk_tags", "ner_tags"],  desc="Mapping to normalized format")
+        target_dataset[split] = dataset.map(map_batch, batched=True, remove_columns=["tokens","pos_tags", "chunk_tags", "ner_tags"],  desc="Mapping to normalized format", keep_in_memory=True)
         target_dataset[split].features["spans"] = Sequence(feature={"start": Value("int32"), "end": Value("int32"), "label": new_class_label_map})
 
     return target_dataset
