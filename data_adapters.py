@@ -7,47 +7,6 @@ import json
 from typing import List
 from datasets import ClassLabel, Dataset,DatasetDict, Sequence, Value
 
-class Sentence:
-    """
-    Class to represent a sentence.
-    """
-    def __init__(self, id, text, spans):
-        self.id = id
-        self.text = text
-        self.spans = spans
-
-    def __repr__(self):
-        return f"Sentence(id={self.id}, text={self.text}, spans={self.spans})"
-
-    def __str__(self):
-        return f"Sentence(id={self.id}, text={self.text}, spans={self.spans})"
-
-#conll03 converter based on huggingface's conll03.py (id (string)	tokens (sequence)	pos_tags (sequence)	chunk_tags (sequence)	ner_tags (sequence))
-def convert_conll03_ner_dataset(source_dataset: DatasetDict) -> DatasetDict:
-    """
-    Converts a NER dataset to the normalized format.
-    """
-    feature = "ner_tags"
-    return convert_iob_dataset(source_dataset, feature)
-
-def convert_conll03_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
-    """
-    Converts a Chunk dataset to the normalized format.
-    """
-    feature = "chunk_tags"
-    return convert_iob_dataset(source_dataset, feature)
-
-def convert_conll00_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
-    """
-    Converts a Chunk dataset to the normalized format and splits the train set into train and validation.
-    """
-    feature = "chunk_tags"
-    new_dict=convert_iob_dataset(source_dataset, feature)
-    split_dict=new_dict["train"].train_test_split(test_size=0.2,seed=42)
-    new_dict["train"]=split_dict["train"]
-    new_dict["validation"]=split_dict["test"]
-    return new_dict
-
 def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDict:
     """
     Converts a dataset to the normalized format.
@@ -104,3 +63,29 @@ def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDic
         target_dataset[split]=target_dataset[split].cast(features)
 
     return target_dataset
+
+#conll03 converter based on huggingface's conll03.py (id (string)	tokens (sequence)	pos_tags (sequence)	chunk_tags (sequence)	ner_tags (sequence))
+def convert_conll03_ner_dataset(source_dataset: DatasetDict) -> DatasetDict:
+    """
+    Converts a NER dataset to the normalized format.
+    """
+    feature = "ner_tags"
+    return convert_iob_dataset(source_dataset, feature)
+
+def convert_conll03_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
+    """
+    Converts a Chunk dataset to the normalized format.
+    """
+    feature = "chunk_tags"
+    return convert_iob_dataset(source_dataset, feature)
+
+def convert_conll00_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
+    """
+    Converts a Chunk dataset to the normalized format and splits the train set into train and validation.
+    """
+    feature = "chunk_tags"
+    new_dict=convert_iob_dataset(source_dataset, feature)
+    split_dict=new_dict["train"].train_test_split(test_size=0.2,seed=42)
+    new_dict["train"]=split_dict["train"]
+    new_dict["validation"]=split_dict["test"]
+    return new_dict
