@@ -23,19 +23,30 @@ class Sentence:
         return f"Sentence(id={self.id}, text={self.text}, spans={self.spans})"
 
 #conll03 converter based on huggingface's conll03.py (id (string)	tokens (sequence)	pos_tags (sequence)	chunk_tags (sequence)	ner_tags (sequence))
-def convert_conll_ner_dataset(source_dataset: DatasetDict) -> DatasetDict:
+def convert_conll03_ner_dataset(source_dataset: DatasetDict) -> DatasetDict:
     """
     Converts a NER dataset to the normalized format.
     """
     feature = "ner_tags"
     return convert_iob_dataset(source_dataset, feature)
 
-def convert_conll_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
+def convert_conll03_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
     """
     Converts a Chunk dataset to the normalized format.
     """
     feature = "chunk_tags"
     return convert_iob_dataset(source_dataset, feature)
+
+def convert_conll00_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
+    """
+    Converts a Chunk dataset to the normalized format and splits the train set into train and validation.
+    """
+    feature = "chunk_tags"
+    new_dict=convert_iob_dataset(source_dataset, feature)
+    split_dict=new_dict["train"].train_test_split(test_size=0.2,seed=42)
+    new_dict["train"]=split_dict["train"]
+    new_dict["validation"]=split_dict["test"]
+    return new_dict
 
 def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDict:
     """
@@ -86,10 +97,10 @@ def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDic
         columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "text", "spans"]]
         target_dataset[split] = dataset.map(
             map_batch, batched=True, remove_columns=columns_to_remove,
-            desc="Mapping to normalized format", keep_in_memory=True
+            desc="Mapping to normalized format", keep_in_memory=True, 
         )
-        target_dataset[split].features["spans"] = Sequence(
-            feature={"start": Value("int32"), "end": Value("int32"), "label": new_class_label_map}
-        )
+        features=target_dataset[split].features.copy()
+        features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]
+        target_dataset[split]=target_dataset[split].cast(features)
 
     return target_dataset
