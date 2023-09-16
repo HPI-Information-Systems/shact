@@ -1,11 +1,11 @@
 """
 Different functions to convert datasets in different formats to a normalized format.
 The normalized format contains an id, the text and a list of spans (start, end, label).
-Each function return a list of dictionaries and a class label bidict.
+Each function recieves a DatasetDict and returns a DatasetDict.
 """
 import json
-from typing import List
-from datasets import ClassLabel, Dataset,DatasetDict, Sequence, Value
+from typing import Dict, List
+from datasets import ClassLabel, Dataset,DatasetDict, Features, Sequence, Value
 
 def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDict:
     """
@@ -51,17 +51,14 @@ def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDic
 
     target_dataset = DatasetDict()
 
-    for split, dataset in source_dataset.items():
-        # list all columns that shoudl not be in the output
-        columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "text", "spans"]]
-        target_dataset[split] = dataset.map(
-            map_batch, batched=True, remove_columns=columns_to_remove,
-            desc="Mapping to normalized format", keep_in_memory=True, 
-        )
-        features=target_dataset[split].features.copy()
-        features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]
-        target_dataset[split]=target_dataset[split].cast(features)
-
+    # list all columns that shoudl not be in the output
+    columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "text", "spans"]]
+    features=Features({"id": Value(dtype="string"), "text": Sequence(feature=Value(dtype="string")), "spans": [{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]})
+    #features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]
+    target_dataset = source_dataset.map(
+        map_batch, batched=True, remove_columns=columns_to_remove,
+        desc="Mapping to normalized format", keep_in_memory=True, features=features, 
+    )
     return target_dataset
 
 #conll03 converter based on huggingface's conll03.py (id (string)	tokens (sequence)	pos_tags (sequence)	chunk_tags (sequence)	ner_tags (sequence))
@@ -135,6 +132,29 @@ def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
         target_dataset[split]=target_dataset[split].cast(features)
     return target_dataset
         
-        
+def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
+    """
+    Each document is split into sentences and the sentences are converted with IOB NER tags.
+    """
+    iob_dataset=DatasetDict()
+    ne_feature = source_dataset["train"].features["sentences"][0]["named_entities"]
+    def map_doc_batch(batch: Dict[str, List]) -> Dict[str, List]:
+        new_batch = {"id": [], "sentence": []}
+        for document_id, sentences in zip(batch["document_id"], batch["sentences"]):
+            for i,sentence in enumerate(sentences):
+                new_batch["id"].append(f"{document_id}-{i}")
+                new_batch["sentence"].append(sentence)
+        return new_batch
+    new_dataset=source_dataset.map(map_doc_batch, batched=True, keep_in_memory=True, remove_columns=["document_id", "sentences"])
+    def map_sentence_batch(batch: Dict[str, List]) -> Dict[str, List]:
+        new_batch = {"id": [], "tokens": [], "ner_tags": []}
+        for document_id, sentence in zip(batch["id"], batch["sentence"]):
+            new_batch["id"].append(document_id)
+            new_batch["tokens"].append(sentence["words"])
+            new_batch["ner_tags"].append(sentence["named_entities"])
+        return new_batch
+    features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "ner_tags": ne_feature})
+    iob_dataset=new_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to IOB format", features=features)
+    return convert_iob_dataset(iob_dataset, "ner_tags")
 
 
