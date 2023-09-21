@@ -6,6 +6,7 @@ Each function recieves a DatasetDict and returns a DatasetDict.
 import json
 from typing import Dict, List
 from datasets import ClassLabel, Dataset,DatasetDict, Features, Sequence, Value
+from nltk import Tree
 
 def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDict:
     """
@@ -131,13 +132,8 @@ def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
         features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj}]
         target_dataset[split]=target_dataset[split].cast(features)
     return target_dataset
-        
-def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
-    """
-    Each document is split into sentences and the sentences are converted with IOB NER tags.
-    """
-    iob_dataset=DatasetDict()
-    ne_feature = source_dataset["train"].features["sentences"][0]["named_entities"]
+
+def pre_process_ontonotes(source_dataset: DatasetDict) -> DatasetDict:
     def map_doc_batch(batch: Dict[str, List]) -> Dict[str, List]:
         new_batch = {"id": [], "sentence": []}
         for document_id, sentences in zip(batch["document_id"], batch["sentences"]):
@@ -145,7 +141,15 @@ def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
                 new_batch["id"].append(f"{document_id}-{i}")
                 new_batch["sentence"].append(sentence)
         return new_batch
-    new_dataset=source_dataset.map(map_doc_batch, batched=True, keep_in_memory=True, remove_columns=["document_id", "sentences"])
+    return source_dataset.map(map_doc_batch, batched=True, keep_in_memory=True, remove_columns=["document_id", "sentences"])
+
+def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
+    """
+    Each document is split into sentences and the sentences are converted with IOB NER tags.
+    """
+    iob_dataset=DatasetDict()
+    ne_feature = source_dataset["train"].features["sentences"][0]["named_entities"]
+    sentence_dataset=pre_process_ontonotes(source_dataset)
     def map_sentence_batch(batch: Dict[str, List]) -> Dict[str, List]:
         new_batch = {"id": [], "tokens": [], "ner_tags": []}
         for document_id, sentence in zip(batch["id"], batch["sentence"]):
@@ -154,7 +158,63 @@ def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
             new_batch["ner_tags"].append(sentence["named_entities"])
         return new_batch
     features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "ner_tags": ne_feature})
-    iob_dataset=new_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to IOB format", features=features)
+    iob_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to IOB format", features=features)
     return convert_iob_dataset(iob_dataset, "ner_tags")
 
+def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
+    """
+    Each document is split into sentences and the sentences are converted with IOB NER tags.
+    """
+    span_dataset=DatasetDict()
+    list_parse_tree_labels=["O","S","SBAR","SBARQ","SINV","SQ","ADJP","ADVP","CONJP","FRAG","INTJ","LST","NAC","NP","NX","PP","PRN","PRT","QP","RRC","UCP","VP","WHADJP","WHAVP","WHNP","WHPP","X","TOP"]
+    class_label_obj: ClassLabel = ClassLabel(names=list_parse_tree_labels)
+    sentence_dataset=pre_process_ontonotes(source_dataset)
+    ignored_labels=set()
+    def map_sentence_batch(batch: Dict[str, List]) -> Dict[str, List]:
+        def extract_subtree_spans(tree):
+            spans = []
+            def traverse(node, start_index):
+                nonlocal spans
+                nonlocal ignored_labels
+
+                # Get the span for the current node
+                leaves = node.leaves()
+                start = start_index
+                end = start_index + len(leaves) - 1
+                if node.label() in list_parse_tree_labels:
+                    label = class_label_obj.str2int(node.label()) #node.label()
+                    # Append the span and label to the list as a dictionary
+                    spans.append({"start": start, "end": end, "label": label})
+                    #spans.append((start, end, label))
+                else:
+                    #raise ValueError(f"Label {node.label()} not in {list_parse_tree_labels}")
+                    ignored_labels.add(node.label())
+                # Recur for each child
+                extra=0
+                for child in node:
+                    if isinstance(child, Tree):
+                        child_leaves = traverse(child, start_index + extra)
+                        extra+=len(child_leaves)
+                return leaves
+            # Start the traversal
+            traverse(tree, 0)
+            return spans
+        new_batch = {"id": [], "tokens": [], "spans": []}
+        for document_id, sentence in zip(batch["id"], batch["sentence"]):
+            try:
+                tree=Tree.fromstring(sentence["parse_tree"])
+                spans=extract_subtree_spans(tree)
+            except Exception as e:
+                #print(e)
+                #print(f"Ignored {document_id} - {sentence['parse_tree']}")
+                continue
+            new_batch["id"].append(document_id)
+            new_batch["tokens"].append(sentence["words"])
+            new_batch["spans"].append(spans)
+        return new_batch
+    print(f"Ignored labels: {ignored_labels}")
+    span_features=Features({"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj})
+    features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "spans": list([span_features])})
+    span_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to spans", features=features)
+    return span_dataset
 
