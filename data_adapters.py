@@ -48,13 +48,13 @@ def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDic
 
     # Create mapping
     def map_batch(batch):
-        return {"id": batch["id"], "text": batch["tokens"], "spans": map_iob_to_spans(batch[feature])}
+        return {"id": batch["id"], "tokens": batch["tokens"], "spans": map_iob_to_spans(batch[feature])}
 
     target_dataset = DatasetDict()
 
     # list all columns that shoudl not be in the output
-    columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "text", "spans"]]
-    features=Features({"id": Value(dtype="string"), "text": Sequence(feature=Value(dtype="string")), "spans": [{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]})
+    columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "tokens", "spans"]]
+    features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "spans": [{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]})
     #features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": new_class_label_map}]
     target_dataset = source_dataset.map(
         map_batch, batched=True, remove_columns=columns_to_remove,
@@ -122,10 +122,10 @@ def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
             all_spans.append(spans)
         return all_spans
     def map_batch(batch):
-        return {"id": batch["id"], "text": batch["tokens"], "spans": map_entity(batch["entities"])}
+        return {"id": batch["id"], "tokens": batch["tokens"], "spans": map_entity(batch["entities"])}
     for split in ["train","validation","test"]:
         #build the spans column using map
-        columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "text", "spans"]]
+        columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "tokens", "spans"]]
         target_dataset[split]=target_dataset[split].map(map_batch,batched=True, remove_columns=columns_to_remove,
             desc="Mapping to normalized format", keep_in_memory=True,)
         features=target_dataset[split].features.copy()
@@ -218,3 +218,12 @@ def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
     span_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to spans", features=features)
     return span_dataset
 
+def assert_columns(dataset:DatasetDict):
+    for split in ["train","validation","test"]:
+        assert "id" in dataset[split].column_names
+        assert "tokens" in dataset[split].column_names
+        assert "spans" in dataset[split].column_names
+        assert "start" in dataset[split].features["spans"][0]
+        assert "end" in dataset[split].features["spans"][0]
+        assert "label" in dataset[split].features["spans"][0]
+        assert isinstance(dataset[split].features["spans"][0]["label"],ClassLabel)

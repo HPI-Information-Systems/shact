@@ -17,6 +17,8 @@ from dotenv import dotenv_values
 from latent_space import cosine_distance
 from utils import build_tensors_for_inference
 from transformers import PreTrainedTokenizerFast
+import configparser
+import data_adapters as da
 #disable tokenizers parallelism
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -53,9 +55,8 @@ if __name__ == '__main__':
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("--model_name", default="LSHAC_NERModel", type=str, help="Name of the model")
     parser.add_argument("--lang_model_name", default="bert-base-uncased", type=str, help="Transformers (Bert) model name")
-    parser.add_argument("--dataset", default="wnut_17", type=str, help="HF Dataset to use")
-    parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
-    parser.add_argument("--feature_name", default="ner_tags", type=str, help="Name of the feature to use")
+    #parser.add_argument("--dataset", default="wnut_17", type=str, help="HF Dataset to use")
+    #parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
     parser.add_argument("--test_batch_size", type=int, help="batch size for validation and test")
     parser.add_argument("--restart_ls", action="store_true", help="Restart the weights of the latent space")
@@ -68,10 +69,17 @@ if __name__ == '__main__':
     parser.add_argument("--limit_samples", type=int , help="Limit to the number of spans for sentence to use for training the classifier")
     parser.add_argument("--warmup_epochs", type=int , default=5, help="Number of non entity spans for sentence to use for training the classifier")
     #boolean argument for only considering entity or non entity spans
-    parser.add_argument("--only_entities", action="store_true", help="Only consider entity spans")
+    #parser.add_argument("--only_entities", action="store_true", help="Only consider entity spans")
+    #add config ini arg for task
+    parser.add_argument("--task_config", type=str, required=True , help="Config file for task")
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
+    config = configparser.ConfigParser()
+    config.read(args.task_config)
+    args.dataset=config["Dataset"].get("hf_dataset_name")
+    args.sub_dataset=config["Dataset"].get("hf_subdataset_name")
+    args.data_adapter = config["Dataset"].get("data_adapter")
     pl.seed_everything(args.seed)
     logger=False
     if use_wandb:
@@ -101,36 +109,22 @@ if __name__ == '__main__':
         hf_dataset=load_dataset(args.dataset,args.sub_dataset)
     else:
         hf_dataset=load_dataset(args.dataset)
-          
+    
+    #apply data adapter
+    #find function, if it does not exist, show error and exit
+    if not hasattr(da,args.data_adapter):
+        print("Data adapter",args.data_adapter,"not found")
+        exit(1)
+    data_adapter_fn=getattr(da,args.data_adapter)
+    hf_dataset=data_adapter_fn(hf_dataset)
+
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
     dm=None
-    model_class=None
-    if args.dataset == "Rosenberg/genia":
-        #improve condition for any nested NER dataset
-        if args.only_entities:
-            new_hf_dataset = dict()
-            for split in hf_dataset.keys():
-                new_ds_list = []
-                for ds in hf_dataset[split]:
-                    d = dict()
-                    d["tokens"] = ds["tokens"]
-                    #convert all entities to entity
-                    d["entities"] = [
-                        {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
-                    new_ds_list.append(d)
-                new_hf_dataset[split] = new_ds_list
-            hf_dataset = new_hf_dataset
-        args.feature_name="entities"
-        dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                                    feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
-        model_class = LSHAC_NestedNERModel
-    else:
-        #TODO only_entities for flat ner
-        dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                              tag_format=get_tag_format(hf_dataset, feature_name=args.feature_name), undersample_rate=args.undersample_rate, feature_name=args.feature_name, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
-        model_class = LSHAC_FlatNERModel
-    
+    model_class = None
+    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+                                num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+    model_class = LSHAC_NestedNERModel
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"

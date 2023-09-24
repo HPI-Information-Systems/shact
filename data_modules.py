@@ -434,7 +434,7 @@ class HFNestedNerSpanDataset(Dataset):
         each containing only one entity or no entity
         """
         new_sentences=[]
-        self.types=["O"]
+        self.types=raw_data.features[self.feature_name][0]["label"]
         for raw_sentence in tqdm(raw_data,desc="Broadcasting sentences"):
             new_sentence=[]
             entities=raw_sentence[self.feature_name]
@@ -443,12 +443,9 @@ class HFNestedNerSpanDataset(Dataset):
             for ii,entity in enumerate(entities):
                 s_idx=entity["start"]
                 e_idx=entity["end"]
-                str_type=entity["type"]
-                if str_type not in self.types:
-                    self.types.append(str_type)
-                type=self.types.index(str_type)
+                label=entity["label"]
                 s=(s_idx,e_idx-1)
-                new_sentence.append((raw_sentence["tokens"],s,type))
+                new_sentence.append((raw_sentence["tokens"],s,label))
                 spans.append(s)
             by_id=False
             if span_generator_fn:
@@ -500,20 +497,11 @@ class HFNestedNerSpanDataset(Dataset):
                 "all_word_ids":torch.tensor(all_word_ids,dtype=torch.long,device=inputs.input_ids.device)}
 
 class HFNestedNerDataset(Dataset):
-    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset, tokenizer:Tokenizer,feature_name:str="entities", types:Optional[List[str]]=None) -> None:
+    def __init__(self, hf_examples:hf_datasets.arrow_dataset.Dataset, tokenizer:Tokenizer,feature_name:str="entities") -> None:
         self.raw_data=hf_examples
         self.feature_name=feature_name
         self.tokenizer=tokenizer
-        if types is None:
-            self.types=["null_type"]
-            for raw_sentence in tqdm(self.raw_data,desc="Reading types"):
-                entities=raw_sentence[self.feature_name]
-                for entity in entities:
-                    str_type=entity["type"]
-                    if str_type not in self.types:
-                        self.types.append(str_type)
-        else:
-            self.types=types
+        self.types:ClassLabel=hf_examples.features[feature_name][0]["label"]
 
     def __len__(self):
         return len(self.raw_data)
@@ -534,8 +522,7 @@ class HFNestedNerDataset(Dataset):
             entities=example[self.feature_name]
             entities_w_spans=[]
             for entity in entities:
-                str_type=entity["type"]
-                type=self.types.index(str_type)
+                type=entity["label"]
                 span_s=entity["start"]
                 span_e=entity["end"]
                 entities_w_spans.append((span_s,span_e-1,type))
@@ -574,7 +561,7 @@ class HFNestedNerDataset(Dataset):
                 "all_word_ids":all_word_ids}
     
 class HFNestedNer_DataModule(pl.LightningDataModule):
-    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,feature_name="entities",span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None, test_batch_size:int=None):
+    def __init__(self,hf_dataset,tokenizer:Tokenizer,batch_size=32,num_workers=None,undersample_rate=None,span_sampler_fn:Optional[Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]]=None,limit_samples:int=None, test_batch_size:int=None):
         super().__init__()
         self.tokenizer=tokenizer
         self.batch_size=batch_size
@@ -583,7 +570,7 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         self.span_sampler_fn=span_sampler_fn
         self.tokenizer = tokenizer
         self.num_workers=num_workers
-        self.feature_name=feature_name
+        self.feature_name="spans"
         if self.num_workers is None or self.num_workers==0:
             self.num_workers=os.cpu_count()
         self.int2str=dict()
@@ -594,8 +581,8 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         self.limit_samples=limit_samples
         self.dl_train,int2str=self._get_train_loader(self.train_data,self.batch_size)
         self.int2str["train"]=int2str
-        self.class_label_obj=ClassLabel(names=int2str)
-        self.num_classes=len(self.int2str["train"])
+        self.class_label_obj=self.train_data.features[self.feature_name][0]["label"] #ClassLabel(names=int2str)
+        self.num_classes=len(self.class_label_obj.names)
 
     def resample_train_dataloader(self, span_sampler_fn:Optional[Callable[[List[str]],Generator[Tuple[int,int],None,None]]]=None) -> DataLoader:
         """
@@ -629,12 +616,12 @@ class HFNestedNer_DataModule(pl.LightningDataModule):
         return dl
 
     def _get_test_loader(self,data,batch_size):
-        ds=HFNestedNerDataset(data,self.tokenizer,feature_name=self.feature_name, types=self.int2str["train"])
+        ds=HFNestedNerDataset(data,self.tokenizer,feature_name=self.feature_name)
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers),self.int2str["train"]
 
     def _get_train_loader(self,data,batch_size):
         ds=HFNestedNerSpanDataset(data,self.tokenizer, feature_name=self.feature_name, span_generator_fn=self.span_sampler_fn,limit_samples=self.limit_samples)
-        int2str=ds.types
+        int2str=ds.types.int2str
         return DataLoader(ds,batch_size=batch_size,collate_fn=ds.collate_fn,num_workers=self.num_workers, shuffle=True),int2str
 
 

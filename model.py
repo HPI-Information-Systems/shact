@@ -33,9 +33,10 @@ class LSHAC_NERModel(pl.LightningModule):
         self.transformer_model=transformer_model
         self.tokenizer=tokenizer
         self.orig_classes=classes
-        self.types=[]
+        #self.types=[]
         orig_label_names=self.orig_classes.names
-        self.types,self.class_type_mapping=self._get_types_mapping(self.orig_classes)
+        self.types=self.orig_classes.names
+        #self.types,self.class_type_mapping=self._get_types_mapping(self.orig_classes)
         self.ls_hidden_size=ls_hidden_size
         #fc classif as a 2 layer mlp
         self.fc_classif = nn.Sequential(
@@ -104,7 +105,7 @@ class LSHAC_NERModel(pl.LightningModule):
             return None
 
     def _get_type_idx(self,class_label:int)->int:
-        return self.types.index(self.class_type_mapping[self.orig_classes.names[class_label]])
+        return self.orig_classes.str2int(class_label)
     
     def _get_clustering_model(self, word_ids):
         """
@@ -270,7 +271,7 @@ class LSHAC_NERModel(pl.LightningModule):
         clusters_filter=clusters
         sentence_masks_filter=sentence_masks
         if not self.warmup:
-            O_type_idx=self._get_type_idx(self.types.index("O"))
+            O_type_idx=self.orig_classes.str2int("O")
             type_filter=types!=O_type_idx # filter out O labels
             ls_vectors_filter=ls_vectors[type_filter]
             clusters_filter=clusters[type_filter]
@@ -328,9 +329,9 @@ class LSHAC_NERModel(pl.LightningModule):
                 min=torch.min(indices).item()
                 max=torch.max(indices).item()
                 type=type.item()
-                classes_tensor_ohe=torch.zeros(len(self.types))
-                classes_tensor_ohe[type]=1
-                gt_spans_sentence.append(((min,max),type,classes_tensor_ohe))
+                #classes_tensor_ohe=torch.zeros(len(self.types))
+                #classes_tensor_ohe[type]=1
+                gt_spans_sentence.append(((min,max),type,None))
             gt_spans_batch.append(gt_spans_sentence)
         return gt_spans_batch        
 
@@ -343,8 +344,8 @@ class LSHAC_NERModel(pl.LightningModule):
         ls_vectors,clusters,logits=self.forward(inputs,cluster_spans)
         #only compute ls_loss for entities
         ls_loss=self.ls_loss(ls_vectors,batch,types)
-        type_idxs=[self._get_type_idx(type) for type in types] if types else None
-        class_loss=self.class_criterion(logits,type_idxs) if not self.warmup else None
+        #type_idxs=[self._get_type_idx(type) for type in types] if types else None
+        class_loss=self.class_criterion(logits,types) if not self.warmup else None
         return class_loss,ls_loss
 
     def training_step(self, batch, batch_idx):
@@ -393,7 +394,7 @@ class LSHAC_NERModel(pl.LightningModule):
             pr_fn=utils.get_potential_recall_nested
         potential_recall=pr_fn(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
         for k,v in potential_recall.items():
-            class_name=self.class_type_mapping[self.orig_classes.int2str(k)]           
+            class_name=self.orig_classes.int2str(k)        
             self.log(f"metrics/val_{class_name}_potential_recall",v)
         
         #if using confusion matrix
