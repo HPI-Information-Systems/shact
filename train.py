@@ -25,11 +25,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
     """Sample 2*length+1 random spans from the text"""
     yielded=set()
+    generated=set()
     length=len(words)
-    while len(yielded)<(2*length+1):
+    while len(yielded)<(2*length+1) and len(generated)<(length*(length+1)//2):
         span_length=random.randint(1,length)#TODO favor shorter spans
         start=random.randint(0,len(words)-1)
         end=start+span_length-1
+        if (start,end) not in generated and end<len(words):
+            generated.add((start,end))
         if (start,end) not in yielded and end<len(words):
             yielded.add((start,end))
             yield start,end

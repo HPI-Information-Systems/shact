@@ -1,6 +1,8 @@
 """
 Different functions to convert datasets in different formats to a normalized format.
 The normalized format contains an id, the text and a list of spans (start, end, label).
+Start corresponds to the start index of the span, end to the end index of the span plus one and label to the index of the span's label.
+The features object for the label is a ClassLabel object containing the label names.
 Each function recieves a DatasetDict and returns a DatasetDict.
 """
 import json
@@ -30,12 +32,12 @@ def convert_iob_dataset(source_dataset: DatasetDict, feature: str) -> DatasetDic
                     # Check if there is an entity
                     if current_entity:
                         spans.append(current_entity)
-                    current_entity = {"start": i, "end": i, "label": new_class_label_map.str2int(str_label[2:])}
+                    current_entity = {"start": i, "end": i+1, "label": new_class_label_map.str2int(str_label[2:])}
                 elif str_label.startswith("I-"):
                     if current_entity:
-                        current_entity["end"] = i
+                        current_entity["end"] = i+1
                     else:
-                        current_entity = {"start": i, "end": i, "label": new_class_label_map.str2int(str_label[2:])}
+                        current_entity = {"start": i, "end": i+1, "label": new_class_label_map.str2int(str_label[2:])}
                 else:
                     if current_entity:
                         spans.append(current_entity)
@@ -68,14 +70,14 @@ def convert_conll03_ner_dataset(source_dataset: DatasetDict) -> DatasetDict:
     Converts a NER dataset to the normalized format.
     """
     feature = "ner_tags"
-    return convert_iob_dataset(source_dataset, feature)
+    return convert_iob_dataset(source_dataset, feature).filter(lambda example: len(example["tokens"])>0)
 
 def convert_conll03_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
     """
     Converts a Chunk dataset to the normalized format.
     """
     feature = "chunk_tags"
-    return convert_iob_dataset(source_dataset, feature)
+    return convert_iob_dataset(source_dataset, feature).filter(lambda example: len(example["tokens"])>0)
 
 def convert_conll00_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
     """
@@ -86,7 +88,7 @@ def convert_conll00_chunk_dataset(source_dataset: DatasetDict) -> DatasetDict:
     split_dict=new_dict["train"].train_test_split(test_size=0.2,seed=42)
     new_dict["train"]=split_dict["train"]
     new_dict["validation"]=split_dict["test"]
-    return new_dict
+    return new_dict.filter(lambda example: len(example["tokens"])>0)
 
 def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
     """
@@ -131,7 +133,7 @@ def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
         features=target_dataset[split].features.copy()
         features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj}]
         target_dataset[split]=target_dataset[split].cast(features)
-    return target_dataset
+    return target_dataset.filter(lambda example: len(example["tokens"])>0)
 
 def pre_process_ontonotes(source_dataset: DatasetDict) -> DatasetDict:
     def map_doc_batch(batch: Dict[str, List]) -> Dict[str, List]:
@@ -159,7 +161,7 @@ def convert_ontonotes_en_ner(source_dataset:DatasetDict) -> DatasetDict:
         return new_batch
     features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "ner_tags": ne_feature})
     iob_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to IOB format", features=features)
-    return convert_iob_dataset(iob_dataset, "ner_tags")
+    return convert_iob_dataset(iob_dataset, "ner_tags").filter(lambda example: len(example["tokens"])>0)
 
 def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
     """
@@ -180,7 +182,7 @@ def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
                 # Get the span for the current node
                 leaves = node.leaves()
                 start = start_index
-                end = start_index + len(leaves) - 1
+                end = start_index + len(leaves)
                 if node.label() in list_parse_tree_labels:
                     label = class_label_obj.str2int(node.label()) #node.label()
                     # Append the span and label to the list as a dictionary
@@ -216,7 +218,7 @@ def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
     span_features=Features({"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj})
     features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "spans": list([span_features])})
     span_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to spans", features=features)
-    return span_dataset
+    return span_dataset.filter(lambda example: len(example["tokens"])>0)
 
 def assert_columns(dataset:DatasetDict):
     for split in ["train","validation","test"]:
