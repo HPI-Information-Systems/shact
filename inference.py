@@ -22,16 +22,26 @@ import re
 import data_adapters as da
 import configparser
 
-def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
+def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]], flat:bool=False)->bool:
     """
     Checks if the prediction is perfect
     """
-    w_assignments=prediction.get_word_assignments()
+    w_assignments=prediction.get_word_assignments(flat=flat)
     for (s,e,t) in gt:
         type_index=prediction.types_list.index(t)
         found=False
         for ((s2,e2),t2) in w_assignments:
             if s==s2 and e==e2 and type_index==t2:
+                found=True
+        if not found:
+            return False
+    for ((s,e),t) in w_assignments:
+        type_name=prediction.types_list[t]
+        if type_name=="O":
+            continue
+        found=False
+        for (s2,e2,t2) in gt:
+            if s==s2 and e==e2 and type_name==t2:
                 found=True
         if not found:
             return False
@@ -186,7 +196,7 @@ if __name__ == '__main__':
                     f.write(json.dumps(json_obj)+"\n")
         if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
-                if args.tree_type=="all" or (not is_perfect_prediction(p_obj, g)):
+                if args.tree_type=="all" or (not is_perfect_prediction(p_obj, g, flat=flat)):
                     colors={t:c for t,c in zip(dm.class_label_obj.names,vis.generate_colors(len(dm.class_label_obj.names)))}
                     tree=p_obj.get_pydot_tree(colors=colors)
                     sentence=tokenizer.decode(input_ids, skip_special_tokens=True)
