@@ -97,7 +97,10 @@ class LSHAC_NER_Prediction():
         assignment_clusters,assignment_types=zip(*self.assignments)
         w_clusters=self.get_word_spans(assignment_clusters)
         return list(zip(w_clusters,assignment_types))
-
+    
+    def get_word_assignments_with_prob(self) -> List[Tuple[Tuple[int,int],int,float]]:
+        assignments=self.get_word_assignments()
+        return list([(c,t,p) for (c,t),p in zip(assignments,self.confidence)])
     
     def get_pydot_tree(self, flat=False, colors:Dict[str,str]={}):
         import pydot
@@ -132,7 +135,8 @@ class LSHAC_NER_Prediction():
             else:
                 #convert from rgb(0,0,0) to #000000
                 color="#"+"".join([hex(int(x))[2:].zfill(2) for x in color[4:-1].split(",")])
-            node=pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}", style="filled", fillcolor=color)
+            confidence=self.get_confidence(a[0][0],a[0][1])
+            node=pydot.Node(str(a[0]),label=f"{a[0]} {self.types_list[a[1]]}({confidence:.2f})", style="filled", fillcolor=color)
             G.add_node(node)
         already_added=[]
         while len(assign_by_length_desc)>0:
@@ -147,3 +151,13 @@ class LSHAC_NER_Prediction():
     
     def _is_child(self,child,parent):
         return child[0]>=parent[0] and child[1]<=parent[1]
+    
+    def get_confidence(self,x,y):
+        #find index in assignments
+        for i,((s,e),t) in enumerate(self.assignments):
+            if s==x and e==y:
+                if i<len(self.confidence):
+                    return self.confidence[i]
+                else:
+                    return 0
+        return 0
