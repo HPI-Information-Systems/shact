@@ -7,11 +7,12 @@ class NestedNERMetric():
     """
     Computes F1, precision and recall for nested NER
     """
-    def __init__(self, types:List[str]):
+    def __init__(self, types:List[str], flat:bool=False):
         """
         types: list of type names
         """
         self.types=types
+        self.flat=flat
 
     def compute(self, predictions:List[LSHAC_NER_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int,int]]]=None,zero_division=0) -> dict | None:
         """
@@ -20,9 +21,11 @@ class NestedNERMetric():
         tp=dict()
         fp=dict()
         fn=dict()
+        
         for prediction,ref in zip(predictions,references):
             ref_spans=set([(span,span_type) for (span,span_type,_) in ref])
-            for (span,span_type) in prediction.assignments:
+            assignments=prediction.get_token_assignments(flat=self.flat)
+            for (span,span_type) in assignments:
                 if span_type not in tp:
                     tp[span_type]=0
                     fp[span_type]=0
@@ -32,7 +35,7 @@ class NestedNERMetric():
                 else:
                     fp[span_type]+=1
             for (span,span_type) in ref_spans:
-                if (span,span_type) not in prediction.assignments:
+                if (span,span_type) not in assignments:
                     if span_type not in tp:
                         tp[span_type]=0
                         fp[span_type]=0

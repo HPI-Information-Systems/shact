@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import List, Tuple
 from inference_model import LSHAC_NER_Prediction
 import pytorch_lightning as pl
@@ -19,6 +20,7 @@ from argparse import Namespace
 import vis
 import re
 import data_adapters as da
+import configparser
 
 def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
     """
@@ -77,16 +79,22 @@ if __name__ == '__main__':
     print("Reusing old config: ",old_args)
     #sys.exit(0)
     #api = wandb.Api()
+    task_config_file = run.config["task_config"]
+    task_config_file=Path(task_config_file)
+    if not task_config_file.exists():
+        print("Task config file not found")
+        exit(1)
+    task_config = configparser.ConfigParser()
+    task_config.read(task_config_file)
+    
+    final_prediction_type=task_config["Inference"].get("final_prediction") # full or flat
+    flat:bool=final_prediction_type=="flat"
     
     lang_model_name=old_args.lang_model_name
     
     config = AutoConfig.from_pretrained(lang_model_name, output_hidden_states=True, output_attentions=True, output_special_tokens=True)
     transformers_model = AutoModel.from_config(config)
-    #transformers_model = AutoModel.from_pretrained(lang_model_name, config=config)
-    # if not args.fine_tune_lm:
-    #     for param in transformers_model.parameters():
-    #         param.requires_grad = False
-    #instantiate fast tokenizer, add add_prefix_space in case of roberta
+
     if lang_model_name.startswith("roberta"):
         tokenizer = AutoTokenizer.from_pretrained(lang_model_name, use_fast=True,add_prefix_space=True)
     else:
@@ -122,7 +130,7 @@ if __name__ == '__main__':
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
         ckpt=os.path.join(ckpt_dir,ckpt[-1])
-        ner_model = LSHAC_NestedNERModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer)
+        ner_model = LSHAC_NestedNERModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer, flat=flat)
     else:
         print("No checkpoint found")
         exit(1)
@@ -199,7 +207,7 @@ if __name__ == '__main__':
                         file.write("</head>\n")
                         file.write("<body>\n")
                         file.write(f"<h1>{str(id)}</h1>\n")
-                        p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments() if t!=0]
+                        p_spans=[(s,e,dm.class_label_obj.int2str(t)) for ((s,e),t) in p_obj.get_word_assignments(flat=flat) if t!=0]
                         html_p=vis.visualize_spans(sentece_words,p_spans, colors=colors)
                         html_g=vis.visualize_spans(sentece_words,g, colors=colors)
                         file.write("<h2>Prediction</h2>\n")

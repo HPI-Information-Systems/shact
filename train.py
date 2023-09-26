@@ -83,6 +83,10 @@ if __name__ == '__main__':
     args.dataset=config["Dataset"].get("hf_dataset_name")
     args.sub_dataset=config["Dataset"].get("hf_subdataset_name")
     args.data_adapter = config["Dataset"].get("data_adapter")
+
+    final_prediction_type=config["Inference"].get("final_prediction") # full or flat
+    flat:bool=final_prediction_type=="flat"
+
     pl.seed_everything(args.seed)
     logger=False
     if use_wandb:
@@ -130,7 +134,8 @@ if __name__ == '__main__':
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
     ner_model = model_class(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr,
-                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric)
+                               ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric,
+                               flat=flat)
 
     assert ner_model is not None
     

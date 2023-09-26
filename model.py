@@ -540,9 +540,11 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
                  lr=1e-3,
                  ls_hidden_size=128, 
                  distance_fn: Callable = torch.cdist, 
-                 hac_metric=None,):
+                 hac_metric=None,
+                 flat:bool=False):
         super().__init__(transformer_model,classes,tokenizer,lr,ls_hidden_size,distance_fn,hac_metric)
-        self.metric=NestedNERMetric(self.types)
+        self.flat=flat
+        self.metric=NestedNERMetric(self.types, flat=flat)
 
     def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
