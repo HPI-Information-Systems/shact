@@ -18,6 +18,7 @@ from dotenv import dotenv_values
 from argparse import Namespace
 import vis
 import re
+import data_adapters as da
 
 def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]])->bool:
     """
@@ -45,9 +46,9 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=min(os.cpu_count(),64), type=int, help="Number of dataloader workers")
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
-    parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
+    #parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
     parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
-    parser.add_argument("--save_predictions", action="store_true", help="Save NER results in a file")
+    parser.add_argument("--save_predictions", action="store_true", help="Save predicted results in a file")
     parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
     #parser = pl.Trainer.add_argparse_args(parser)
     #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
@@ -104,29 +105,16 @@ if __name__ == '__main__':
     else:
         hf_dataset=load_dataset(old_args.dataset)
 
-    if old_args.dataset == "Rosenberg/genia":
-        #improve condition for any nested NER dataset
-        if old_args.only_entities:
-            new_hf_dataset = dict()
-            for split in hf_dataset.keys():
-                new_ds_list = []
-                for ds in hf_dataset[split]:
-                    d = dict()
-                    d["tokens"] = ds["tokens"]
-                    #convert all entities to entity
-                    d["entities"] = [
-                        {"start": e["start"], "end":e["end"], "type":"entity"} for e in ds["entities"]]
-                    new_ds_list.append(d)
-                new_hf_dataset[split] = new_ds_list
-            hf_dataset = new_hf_dataset
-        dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers, feature_name="entities", limit_samples=0)
-        model_class = LSHAC_NestedNERModel
-    else:
-        #TODO only_entities for flat ner
-        dm = HFNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size, num_workers=args.workers,
-                              tag_format=get_tag_format(hf_dataset, feature_name=old_args.feature_name), feature_name=args.feature_name, limit_samples=0)
-        model_class = LSHAC_FlatNERModel
-    is_nested = isinstance(dm, HFNestedNer_DataModule)
+    if not hasattr(da,old_args.data_adapter):
+        print("Data adapter",old_args.data_adapter,"not found")
+        exit(1)
+    data_adapter_fn=getattr(da,old_args.data_adapter)
+    hf_dataset=data_adapter_fn(hf_dataset)
+
+    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+                                num_workers=args.workers, limit_samples=0)#, test_batch_size=args.batch_size)
+    model_class = LSHAC_NestedNERModel
+    
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
     ckpt_dir=os.path.join(save_dir,run_spl[1],run_spl[2],"checkpoints")
@@ -134,20 +122,21 @@ if __name__ == '__main__':
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
         ckpt=os.path.join(ckpt_dir,ckpt[-1])
-        ner_model = model_class.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer)
+        ner_model = LSHAC_NestedNERModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer)
     else:
         print("No checkpoint found")
         exit(1)
 
     assert ner_model is not None
     ner_model.warmup=False
+    class_label_obj=dm.class_label_obj
     dataloader_for_test=dm.test_dataloader() if args.use_test else dm.val_dataloader()
     dataset_for_test=dataloader_for_test.dataset
     #dataloader_for_test=dm.val_dataloader()
     trainer.test(ner_model,dataloaders=dataloader_for_test)
     res=trainer.predict(ner_model,dataloaders=dataloader_for_test)
     suffix="test" if args.use_test else "val"
-    pred_file_name=os.path.join(ckpt_dir,f"pred_{suffix}.jsonl") if is_nested else os.path.join(ckpt_dir,f"pred_{suffix}.conll")
+    pred_file_name=os.path.join(ckpt_dir,f"pred_{suffix}.jsonl")
     if args.save_predictions:
         with open(pred_file_name,"w") as f:
             pass
@@ -161,8 +150,6 @@ if __name__ == '__main__':
         ids=batch["ids"]
         if type(ids)==torch.Tensor:
             ids=ids.tolist()
-        if not is_nested:
-            pred_seq=[p.seq_labels_compressed for p in predictions]
         gt_seq=[]
         words=[]
         ds_ids=[]
@@ -178,26 +165,17 @@ if __name__ == '__main__':
             if type(item)==tuple and len(item)==2:
                 item=item[1]
             words.append(item["tokens"])
-            gt_raw=item[old_args.feature_name]
-            if type(ner_model)==LSHAC_FlatNERModel:
-                gt_seq.append([dm.class_label_obj.int2str(i) for i in gt_raw])
-            elif type(ner_model)==LSHAC_NestedNERModel:
-                gt_spans=[(e["start"],e["end"]-1,e["type"]) for e in gt_raw]
-                gt_seq.append(gt_spans)
+            gt_raw=item["spans"]
+            gt_spans=[(e["start"],e["end"]-1,class_label_obj.int2str(e["label"])) for e in gt_raw]
+            gt_seq.append(gt_spans)
         if args.save_predictions:
             with open(pred_file_name,"a") as f:
                 for id,ws,ps in zip(ds_ids,words,pred_seq):
-                    if not is_nested:
-                        f.write(f"#id: {id}\n")
-                        for w,p in zip(ws,ps):
-                            f.write(f"{w} {p}\n")
-                        f.write("\n")
-                    else:
-                        #generate json
-                        json_obj={"id":id,"tokens":ws,"entities":[]}
-                        for ((s,e),t) in ps.get_word_assignments():
-                            json_obj["entities"].append({"start":s,"end":e+1,"type":ps.types_list[t]})
-                        f.write(json.dumps(json_obj)+"\n")
+                    #generate json
+                    json_obj={"id":id,"tokens":ws,"spans":[]}
+                    for ((s,e),t) in ps.get_word_assignments():
+                        json_obj["spans"].append({"start":s,"end":e+1,"type":ps.types_list[t]})
+                    f.write(json.dumps(json_obj)+"\n")
         if args.tree_type!="none":
             for p,g,p_obj,input_ids,sentece_words,id in zip(pred_seq,gt_seq,predictions,batch["inputs"]["input_ids"],words,ids):
                 if args.tree_type=="all" or (not is_perfect_prediction(p_obj, g)):
