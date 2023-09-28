@@ -7,7 +7,7 @@ def hac_sl_ratio_loss(distance_fn, vectors, token_mask,y):
     distance_fn: function that takes two tensors of shape (bs,tokens,latent_space_size) and returns a tensor of shape (bs,tokens,tokens)
     vectors: tensor of shape (bs,tokens,latent_space_size)
     token_mask: tensor of shape (bs,tokens)
-    y: tensor of shape (bs,num_clusters,tokens)
+    y: tensor of shape (bs,tokens)
     """
     orig_shape=y.shape
     distances, ic_distances, ec_distances = hac_compute_distances(distance_fn, vectors, token_mask,y)
@@ -26,7 +26,7 @@ def hac_sl_ratio_loss_token_based(distance_fn, vectors, token_mask,y):
     distance_fn: function that takes two tensors of shape (bs,tokens,latent_space_size) and returns a tensor of shape (bs,tokens,tokens)
     vectors: tensor of shape (bs,tokens,latent_space_size)
     token_mask: tensor of shape (bs,tokens)
-    y: tensor of shape (bs,num_clusters,tokens)
+    y: tensor of shape (bs,tokens)
     """
     orig_shape=y.shape
     distances, ic_distances, ec_distances = hac_compute_distances(distance_fn, vectors, token_mask,y)
