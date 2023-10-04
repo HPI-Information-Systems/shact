@@ -2,3 +2,4 @@
 .env
 .vscode/launch.json
 wandb/*
+agglomerative_ner.code-workspace
