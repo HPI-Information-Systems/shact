@@ -220,6 +220,118 @@ def convert_ontonotes_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
     span_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["sentence"], desc="Mapping to spans", features=features)
     return span_dataset.filter(lambda example: len(example["tokens"])>0)
 
+def convert_ptb_parse_trees(source_dataset:DatasetDict) -> DatasetDict:
+    """
+    Each document has an id and a tree
+    """
+    span_dataset=DatasetDict()
+    list_parse_tree_labels=['O',
+                            'ADJP',
+                            'ADVP',
+                            'CONJP',
+                            'FRAG',
+                            'INTJ',
+                            'LST',
+                            'NAC',
+                            'NP',
+                            'NX',
+                            'PP',
+                            'PRN',
+                            'PRT',
+                            'QP',
+                            'RRC',
+                            'S',
+                            'SBAR',
+                            'SBARQ',
+                            'SINV',
+                            'SQ',
+                            'TOP',
+                            'UCP',
+                            'VP',
+                            'WHADJP',
+                            'WHADVP',
+                            'WHNP',
+                            'WHPP',
+                            'X',
+                            'VBG', 'WDT', 'IN', 'WP', 'CC', 'NN', 'DT', 'VB', '.', ':', 'PDT', 'LS', 'RP', 'WP$', 'NNP', 'RBR', 'SYM', 'EX', 'WRB', 'FW', 'JJ', "''", '-RRB-', 'NNPS', 'JJR', 'JJS', '``', 'CD', 'RB', 'NNS', 'POS', 'VBN', 'VBP', ',', '#', 'PRP', 'MD', 'PRP$', 'UH', 'TO', '-LRB-', '$', 'VBZ', 'VBD', 'RBS',
+                            'TOP+ADVP', 'ADVP+DT', 'ADVP+VB', 'NX+NX', 'PRT+JJ', 'FRAG+PP+IN', 'VP+NNS', 'UCP+ADJP', 'S+NP', 'TOP+ADJP', 'ADJP+ADVP', 'WHADVP+WDT', 'ADVP+NNP', 'NP+VBZ', 'LST+NNP', 'ADVP+NNS', 'QP+PDT', 'ADJP+RB', 'WHNP+QP', 'TOP+VP', 'NP+PRP$', 'ADVP+ADVP+JJR', 'ADJP+IN', 'WHNP+WDT', 'CONJP+IN', 'NP+NP+QP', 'PRT+RP', 'WHNP+VB', 'ADJP+ADJP', 'PRT+VBP', 'X+CD', 'VP+MD', 'X+NP', 'S+NP+PRP', 'NP+NP+NN', 'NX+NNP', 'NP+ADJP', 'INTJ+DT', 'S+ADJP+VBN', 'VP+NN', 'TOP+NP', 'PRN+FRAG+WHADJP', 'X+DT', 'SQ+VP+VBD', 'WHNP+NP', 'TOP+PRN', 'ADJP+CD', 'PRT+IN', 'UCP+PP', 'FRAG+NP+NNP', 'ADJP+VBP', 'ADVP+ADVP+RBR', 'NP+NNP', 'ADVP+PRT+RP', 'SBAR+S', 'TOP+SBAR', 'S+VP+VBN', 'PRT+NNP', 'VP+VBP', 'FRAG+ADJP', 'NP+SYM', 'SBAR+FRAG+NP', 'S+ADVP+RB', 'SBAR+S+VP+VBN', 'PP+RP', 'TOP+X+S', 'ADJP+JJ', 'ADVP+ADVP+RB', 'NP+IN', 'SBAR+WHNP', 'ADVP+RP', 'ADJP+DT', 'FRAG+ADVP+RB', 'LST+CD', 'NP+INTJ+DT', 'TOP+FRAG+PP', 'ADJP+QP', 'ADVP+RBR', 'TOP+PP', 'FRAG+SBAR', 'X+VP', 'S+ADJP+JJ', 'ADJP+ADJP+JJR', 'S+VP+VBZ', 'NP+UH', 'FRAG+NP+DT', 'WHADVP+JJR', 'SBAR+RB', 'WHNP+NNS', 'TOP+SBARQ', 'S+ADVP+NNP', 'FRAG+WHPP', 'S+ADVP+JJ', 'VP+NNP', 'NP+NP', 'ADVP+PRP', 'NX+S+VP', 'PRN+SBAR', 'ADJP+NN', 'S+VP+VBD', 'INTJ+VB', 'FRAG+DT', 'ADVP+VBZ', 'NX+NNPS', 'S+S', 'NP+NP+VBZ', 'X+SBARQ', 'TOP+NP+NP', 'FRAG+NP+NN', 'WHNP+WP', 'TOP+FRAG+SBAR', 'NP+PRN', 'S+ADJP+NNP', 'S+ADJP+NN', 'PP+IN', 'FRAG+WHADVP+WRB', 'FRAG+SBARQ', 'TOP+NP+VBN', 'ADJP+NNP', 'X+MD', 'TOP+X+ADVP', 'ADVP+IN', 'S+VP+NNS', 'PRT+VB', 'FRAG+NNP', 'NP+FW', 'NP+NP+NNP', 'NP+FRAG', 'S+VP+VB', 'TOP+X+SBARQ', 'NP+RBS', 'VP+ADVP', 'WHNP+WP$', 'FRAG+VP', 'TOP+S+VP+NNP', 'NP+CD', 'SBAR+SBARQ', 'WHADVP+DT', 'NX+S', 'FRAG+ADVP', 'NP+NN', 'S+NP+NNP', 'NP+WP', 'ADJP+VBG', 'ADVP+JJR', 'PP+TO', 'S+VP+TO', 'S+VP+VP', 'VP+VB', 'S+NP+NNPS', 'ADJP+VBD', 'QP+NNS', 'FRAG+WHADVP', 'FRAG+WHNP', 'NP+POS', 'S+ADVP', 'SBAR+WHADVP+WRB', 'VP+VP', 'NP+NP+RBR', 'ADJP+JJR', 'NP+LS', 'S+VP+NN', 'ADVP+UH', 'ADVP+NN', 'FRAG+S+ADJP+JJ', 'FRAG+S+VP', 'X+FW', 'VP+VBG', 'NAC+NN', 'NP+SBAR+S+VP', 'TOP+S', 'PRT+RB', 'NP+NP+RB', 'FRAG+WHADJP', 'NP+JJR', 'TOP+FRAG+WHADVP', 'LST+JJ', 'INTJ+RB', 'SBARQ+WHADVP+WRB', 'INTJ+WRB', 'SBAR+FRAG', 'VP+VBD', 'TOP+X', 'VP+POS', 'ADVP+ADJP+RBR', 'NP+NP+NP', 'VP+TO', 'FRAG+VP+NN', 'WHNP+WHNP+WP', 'TOP+NP+NN', 'TOP+FRAG', 'X+PP+IN', 'NP+NNPS', 'NX+NX+NN', 'TOP+FRAG+ADVP', 'INTJ+NN', 'LST+SYM', 'TOP+FRAG+NP', 'PRT+VBN', 'NP+DT', 'S+VP+MD', 'ADJP+VB', 'LST+LS', 'VP+NP+NN', 'ADVP+ADVP', 'WHADVP+IN', 'VP+VBN', 'FRAG+ADJP+RBR', 'VP+ADVP+RB', 'NP+VBP', 'NP+NP+CD', 'NP+VB', 'VP+JJ', 'NP+NP+PRP', 'S+ADVP+RBR', 'FRAG+ADJP+JJ', 'FRAG+ADJP+VBG', 'PRN+S', 'INTJ+S', 'PRN+S+VP+NNP', 'WHADVP+RB', 'X+SBAR', 'VP+PP', 'X+RB', 'S+VP+VBP', 'WHADVP+WRB', 'RRC+VP', 'TOP+X+NN', 'S+VP+NNP', 'ADJP+ADJP+JJ', 'NP+VBN', 'TOP+FRAG+NNP', 'NP+JJ', 'NAC+NNP', 'S+ADJP+VBG', 'S+VP+VBG', 'S+VP+JJ', 'NP+TO', 'X+TO', 'FRAG+ADJP+DT', 'NP+ADVP+DT', 'QP+CD', 'S+PP', 'ADVP+EX', 'NX+CD', 'TOP+S+VP', 'NP+WRB', 'INTJ+NNP', 'NP+RB', 'WHNP+DT', 'S+ADJP+RB', 'LST+:', 'S+UCP', 'PRN+NP', 'TOP+NP+S', 'WHNP+CD', 'SBAR+SINV', 'NP+PDT', 'X+VBD', 'NP+PP', 'ADVP+JJS', 'FRAG+UCP', 'ADJP+MD', 'NX+QP', 'INTJ+UH', 'ADVP+CC', 'NP+QP', 'ADJP+NNS', 'X+WP', 'ADVP+RB', 'X+SYM', 'X+PP+TO', 'X+NN', 'FRAG+PP', 'PP+JJ', 'WHNP+JJS', 'NX+NNS', 'NX+VBG', 'FRAG+ADJP+VBN', 'TOP+NP+NNP', 'ADJP+RBR', 'NX+JJ', 'FRAG+JJ', 'ADJP+JJS', 'PP+RB', 'VP+IN', 'WHNP+NNP', 'PP+PP', 'WHNP+WRB', 'WHNP+NN', 'X+IN', 'S+ADJP+JJR', 'WHNP+IN', 'WHNP+JJ', 'FRAG+NP', 'X+S', 'ADJP+VBN', 'PRN+SINV', 'S+ADJP', 'NX+NN', 'NP+WDT', 'NP+VBG', 'TOP+SINV', 'ADVP+WRB', 'S+ADVP+JJR', 'X+NNP', 'NP+PRP', 'ADJP+RP', 'S+ADJP+VB', 'VP+FRAG+ADJP+VBN', 'NP+SBAR', 'FRAG+WHNP+WP', 'TOP+UCP', 'NP+NP+NNS', 'S+NP+NNS', 'ADVP+CD', 'INTJ+VBP', 'VP+NNPS', 'VP+SBAR', 'X+ADVP', 'PRT+NN', 'NP+NP+JJR', 'VP+S+VP+NNS', 'QP+NN', 'S+NP+NN', 'PP+NP', 'FRAG+S', 'NP+EX', 'SBAR+SBAR+S', 'TOP+SQ', 'FRAG+RB', 'ADJP+ADJP+RBR', 'NP+MD', 'WHNP+NP+WDT', 'SBAR+WHNP+WDT', 'ADVP+RBS', 'SBAR+S+VP', 'S+VP+ADVP+RB', 'VP+NP', 'ADVP+VBD', 'NP+NNS', 'SQ+VP+VBZ', 'S+VP', 'PRN+PP', 'FRAG+NN', 'NP+S+VP', 'VP+RB', 'FRAG+VP+VB', 'VP+VBZ', 'NP+S', 'FRAG+VP+VBN', 'NP+NP+JJ', 'LST+RB', 'NP+VBD', 'INTJ+JJ', 'NP+JJS', 'QP+RBR', 'TOP+INTJ', 'SQ+VP', 'ADVP+JJ', 'NP+RBR', 'TOP+NP+NNS', 'NP+NP+DT', 'ADJP+NP', 'FRAG+INTJ+JJ',
+                            ]
+    class_label_obj: ClassLabel = ClassLabel(names=list_parse_tree_labels)
+    sentence_dataset=source_dataset
+    ignored_labels=set()
+    def map_sentence_batch(batch: Dict[str, List]) -> Dict[str, List]:
+        def extract_subtree_spans(tree):
+            spans_l = []
+            def traverse(node, start_index=0):
+                nonlocal spans_l
+                nonlocal ignored_labels
+
+                # Get the span for the current node
+                leaves = node.leaves()
+                start = start_index
+                end = start_index + len(leaves)
+                if node.label() in list_parse_tree_labels:
+                    label = node.label()
+                    spans_l.append({"start": start, "end": end, "label": label})
+                else:
+                    ignored_labels.add(node.label())
+                # Recur for each child
+                extra=0
+                for child in node:
+                    if isinstance(child, Tree):
+                        child_leaves = traverse(child, start_index + extra)
+                        extra+=len(child_leaves)
+                return leaves
+            # Start the traversal
+            traverse(tree)
+            #compress all spans with the same start and end into one span concatenating the labels with a +
+            spans2=[]
+            for i,span in enumerate(spans_l):
+                start=span["start"]
+                end=span["end"]
+                label=span["label"]
+                for span2 in spans_l[i+1:]:
+                    if span2["start"]==start and span2["end"]==end:
+                        label=label+"+"+span2["label"]
+                #check if span already exists
+                already_exists=False
+                for span2 in spans2:
+                    if span2["start"]==start and span2["end"]==end:#can be more efficient with a set or a dict (hashing)
+                        already_exists=True
+                        break
+                if not already_exists:
+                    spans2.append({"start": start, "end": end, "label": label})
+            #convert labels to int
+            spans=[]
+            for span in spans2:
+                if span["label"] in list_parse_tree_labels:
+                    spans.append({"start": span["start"], "end": span["end"], "label": class_label_obj.str2int(span["label"])})
+                else:
+                    ignored_labels.add(span["label"])
+            return spans
+        new_batch = {"id": [], "tokens": [], "spans": []}
+        for document_id, tree_s in zip(batch["id"], batch["tree"]):
+            try:
+                tree=Tree.fromstring(tree_s)
+                spans=extract_subtree_spans(tree)
+                words=tree.leaves()
+                #replace brackets
+                words=[word.replace("-LRB-","(").replace("-RRB-",")") for word in words]
+
+            except Exception as e:
+                print(e)
+                print(f"Ignored {document_id} - {tree_s}")
+                continue
+            new_batch["id"].append(document_id)
+            new_batch["tokens"].append(words)
+            new_batch["spans"].append(spans)
+        return new_batch
+    span_features=Features({"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj})
+    features=Features({"id": Value(dtype="string"), "tokens": Sequence(feature=Value(dtype="string")), "spans": list([span_features])})
+    span_dataset=sentence_dataset.map(map_sentence_batch, batched=True, keep_in_memory=True, remove_columns=["tree"], desc="Mapping to spans", features=features)
+    print(f"Ignored labels: {ignored_labels}")
+    return span_dataset.filter(lambda example: len(example["tokens"])>0)
+
 def assert_columns(dataset:DatasetDict):
     for split in ["train","validation","test"]:
         assert "id" in dataset[split].column_names

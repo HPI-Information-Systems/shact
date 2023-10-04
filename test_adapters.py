@@ -30,6 +30,11 @@ class TestAdapters(unittest.TestCase):
         dataset=data_adapters.convert_ontonotes_parse_trees(dataset)
         data_adapters.assert_columns(dataset)
 
+    def test_ptb(self):
+        dataset=load_dataset("ptb_dataset.py")
+        dataset=data_adapters.convert_ptb_parse_trees(dataset)
+        data_adapters.assert_columns(dataset)
+
 
 if __name__ == '__main__':
     unittest.main()
