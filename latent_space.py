@@ -118,7 +118,7 @@ def hac_sl_margin_loss(distance_fn, vectors, token_mask,y, margin=0.01):
         #         else:
         #             sum_loss.append(diff[t,i])
     if len(sentence_losses)==0:
-        return None,distances
+        return torch.tensor(0.0,requires_grad=True,device=vectors.device),distances
     loss=torch.mean(torch.stack(sentence_losses))
     return loss,distances
 
