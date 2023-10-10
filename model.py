@@ -357,8 +357,8 @@ class LSHAC_NERModel(pl.LightningModule):
         if class_loss:
             self.log("losses/train_class_loss",class_loss)
             loss+=class_loss
-        if loss==0.0:
-            return None
+        # if loss==0.0:
+        #     return None
         self.log("losses/train_loss",loss)
         return loss
     
