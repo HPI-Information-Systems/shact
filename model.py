@@ -11,7 +11,7 @@ from tokenizers import Tokenizer
 from sklearn.cluster import AgglomerativeClustering
 from clustering_model import compute_clusters, compute_clusters_thread, get_word_spans
 import data_modules as dm
-from latent_space import hac_sl_ratio_loss, hac_sl_ratio_loss_token_based
+from latent_space import hac_sl_ratio_loss, hac_sl_margin_loss
 import utils
 import evaluate
 from pytorch_lightning.loggers.wandb import WandbLogger
@@ -280,12 +280,8 @@ class LSHAC_NERModel(pl.LightningModule):
         assert ls_vectors_filter.shape[0]==sentence_masks_filter.shape[0]
         if ls_vectors_filter.shape[0]==0:
             return None
-        ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)
-        if not ls_loss1:
-            return None
+        ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)#hac_sl_margin_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)
         return ls_loss1
-        #ls_loss2,_ = hac_sl_ratio_loss_token_based(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
-        #return ls_loss1+ls_loss2
     
     def _get_entities_as_spans_from_labels(self,clusters:torch.Tensor,labels:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
         """
@@ -357,8 +353,8 @@ class LSHAC_NERModel(pl.LightningModule):
         if class_loss:
             self.log("losses/train_class_loss",class_loss)
             loss+=class_loss
-        if loss==0.0:
-            return None
+        # if loss==0.0:
+        #     return None
         self.log("losses/train_loss",loss)
         return loss
     
