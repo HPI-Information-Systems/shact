@@ -280,12 +280,8 @@ class LSHAC_NERModel(pl.LightningModule):
         assert ls_vectors_filter.shape[0]==sentence_masks_filter.shape[0]
         if ls_vectors_filter.shape[0]==0:
             return None
-        ls_loss1,distances=hac_sl_margin_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)
-        #if not ls_loss1:
-        #    return None
+        ls_loss1,distances=hac_sl_ratio_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)#hac_sl_margin_loss(distance_fn=self.distance_fn, vectors=ls_vectors_filter, token_mask=sentence_masks_filter, y=clusters_filter)
         return ls_loss1
-        #ls_loss2,_ = hac_sl_ratio_loss_token_based(distance_fn=self.distance_fn, vectors=ls_vectors, token_mask=sentence_masks, y=clusters)
-        #return ls_loss1+ls_loss2
     
     def _get_entities_as_spans_from_labels(self,clusters:torch.Tensor,labels:torch.Tensor) -> List[List[Tuple[Tuple[int,int],int,torch.Tensor]]]:
         """
