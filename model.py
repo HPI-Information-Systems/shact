@@ -385,13 +385,13 @@ class LSHAC_NERModel(pl.LightningModule):
         prediction_objs,_=self.predict(batch)
 
         prediction_labels,gt_labels,res=self._test_batch(batch,prediction_objs)
-        pr_fn=utils.get_potential_recall
-        if "types" in batch:
-            pr_fn=utils.get_potential_recall_nested
-        potential_recall=pr_fn(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
-        for k,v in potential_recall.items():
-            class_name=self.orig_classes.int2str(k)        
-            self.log(f"metrics/val_{class_name}_potential_recall",v)
+        # pr_fn=utils.get_potential_recall
+        # if "types" in batch:
+        #     pr_fn=utils.get_potential_recall_nested
+        # potential_recall=pr_fn(clusters=[obj.clusters for obj in prediction_objs],batch=batch)
+        # for k,v in potential_recall.items():
+        #     class_name=self.orig_classes.int2str(k)        
+        #     self.log(f"metrics/val_{class_name}_potential_recall",v)
         
         #if using confusion matrix
         if self.val_classification is not None:

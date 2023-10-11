@@ -75,6 +75,12 @@ class LSHAC_NER_Prediction():
         w_clusters=self.get_word_spans(assignment_clusters)
         return list(zip(w_clusters,assignment_types))
     
+    def is_cluster(self,span:Tuple[int,int])->bool:
+        """
+        returns True if the span is a cluster
+        """
+        return span in self.clusters
+    
     def get_pydot_tree(self, colors:Dict[str,str]={}):
         assign=self.assignments # we use all for the tree
 
