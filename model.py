@@ -72,7 +72,7 @@ class LSHAC_NERModel(pl.LightningModule):
         h=torch.cat(hidden_states,dim=-1)
         ls=self.ls_proj(h)
         final_layer=hidden_states[-1]
-        return final_layer,ls
+        return final_layer,h,ls
     
     def _encode(self, **x)->torch.Tensor:
         #encodes the input x using the transformer model
@@ -161,7 +161,7 @@ class LSHAC_NERModel(pl.LightningModule):
         latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
         clusters: list of clusters as (min,max) spans for each sentence
         """
-        _,ls=self._full_encode(**x)
+        _,_,ls=self._full_encode(**x)
         return ls
     
     def _fw_classify(self, x, clusters:List[Tuple[int,int]]) -> List[torch.Tensor]:
@@ -551,6 +551,34 @@ class LSHAC_NestedNERModel(LSHAC_NERModel):
         """
         gt_spans=self._get_entities_as_spans_from_batch(batch["final_cluster_masks"],batch["types"])
         return prediction_objs,gt_spans
+    
+class Ablat_HAC_full_encoder(LSHAC_NestedNERModel):
+    """
+    Clusters based on the full encoder instead the latent space vectors
+    """
+    def _fw_clusters(self, x, ) -> torch.Tensor:
+        """
+        x: dict of input ids, attention mask, token type ids, special tokens mask
+        returns: latent space vectors, clusters
+        latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
+        clusters: list of clusters as (min,max) spans for each sentence
+        """
+        _,h,_=self._full_encode(**x)
+        return h
+    
+class Ablat_HAC_last_encoder(LSHAC_NestedNERModel):
+    """
+    Clusters based on the full encoder instead the latent space vectors
+    """
+    def _fw_clusters(self, x, ) -> torch.Tensor:
+        """
+        x: dict of input ids, attention mask, token type ids, special tokens mask
+        returns: latent space vectors, clusters
+        latent space vectors: Tensor of shape (batch_size,seq_length,ls_hidden_size)
+        clusters: list of clusters as (min,max) spans for each sentence
+        """
+        last,_,_=self._full_encode(**x)
+        return last
 
 class LSHAC_FlatNERModel(LSHAC_NERModel):
     def __init__(self, transformer_model: BertModel,
