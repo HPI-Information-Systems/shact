@@ -1,6 +1,5 @@
 *.pyc
 .env
 .vscode/launch.json
-wandb/*
-agglomerative_ner.code-workspace
+*.code-workspace
 *slurm-*.out
