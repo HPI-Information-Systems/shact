@@ -1,18 +1,16 @@
 import random
 from typing import Callable, Generator, List, Tuple, Union
 import pytorch_lightning as pl
-from tqdm import tqdm
-from model import Ablat_HAC_full_encoder, Ablat_HAC_last_encoder, LSHAC_NestedNERModel, LSHAC_FlatNERModel, LSHAC_NERModel
+from model import Ablat_HAC_full_encoder, Ablat_HAC_last_encoder, SHACT_NestedModel, SHAC_BaseModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
 from pytorch_lightning.loggers import WandbLogger
 import torch
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
-import os,re
+import os
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, HFNerIOBDataset,HFNestedNer_DataModule, get_tag_format, include_special_tokens
+from data_modules import HFNested_DataModule, include_special_tokens
 from datasets import load_dataset
-import wandb
 from dotenv import dotenv_values
 from latent_space import cosine_distance
 from utils import build_tensors_for_inference
@@ -37,7 +35,7 @@ def random_span_sampler(words:List[str]) -> Generator[Tuple[int,int],None,None]:
             yielded.add((start,end))
             yield start,end
 
-def get_otf_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenizerFast) -> Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]:
+def get_otf_ls_span_generator(model:SHAC_BaseModel, tokenizer:PreTrainedTokenizerFast) -> Callable[[Union[List[str],int]],Generator[Tuple[int,int],None,None]]:
     def generator(words:List[str]):
         #run inference
         uni_batch=build_tensors_for_inference(words=words, tokenizer=tokenizer)
@@ -52,14 +50,12 @@ def get_otf_ls_span_generator(model:LSHAC_NERModel, tokenizer:PreTrainedTokenize
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
-    out_folder=env_config["LSHAC_NER_OUTPUT_DIR"]
+    out_folder=env_config["SHACT_OUTPUT_DIR"]
     use_wandb=False
     wandb_project=env_config["WANDB_PROJECT"]
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("--model_name", default="LSHAC_NERModel", type=str, help="Name of the model")
     parser.add_argument("--lang_model_name", default="bert-base-uncased", type=str, help="Transformers (Bert) model name")
-    #parser.add_argument("--dataset", default="wnut_17", type=str, help="HF Dataset to use")
-    #parser.add_argument("--sub_dataset", type=str, help="HF Dataset to use. For example for 'dfki-nlp/few-nerd' it could be 'supervised")
     parser.add_argument("--batch_size", default=4, type=int, help="batch size")
     parser.add_argument("--test_batch_size", type=int, help="batch size for validation and test")
     parser.add_argument("--restart_ls", action="store_true", help="Restart the weights of the latent space")
@@ -71,8 +67,6 @@ if __name__ == '__main__':
     parser.add_argument("--distance", default="cosine", type=str,choices=["cosine","euclidean"] , help="Distance function to use")
     parser.add_argument("--limit_samples", type=int , help="Limit to the number of spans for sentence to use for training the classifier")
     parser.add_argument("--warmup_epochs", type=int , default=5, help="Number of non entity spans for sentence to use for training the classifier")
-    #boolean argument for only considering entity or non entity spans
-    #parser.add_argument("--only_entities", action="store_true", help="Only consider entity spans")
     #add config ini arg for task
     parser.add_argument("--task_config", type=str, required=True , help="Config file for task")
     parser = pl.Trainer.add_argparse_args(parser)
@@ -125,12 +119,12 @@ if __name__ == '__main__':
 
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
-    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+    dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
                                 num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist
     hac_metric="cosine" if args.distance=="cosine" else "euclidean"
-    ner_model = LSHAC_NestedNERModel(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr, ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric,
+    ner_model = SHACT_NestedModel(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr, ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric,
                                flat=flat)
 
     assert ner_model is not None
@@ -143,14 +137,14 @@ if __name__ == '__main__':
     warmup_trainer=pl.Trainer.from_argparse_args(args,logger=None,deterministic=True, enable_checkpointing=False, max_epochs=args.warmup_epochs)
     print("Testing before training")
     warmup_trainer.test(ner_model,dataloaders=dm.test_dataloader())
-    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+    dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
                                 num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
     warmup_trainer.fit(ner_model,train_dataloaders=dm.train_dataloader(),val_dataloaders=dm.val_dataloader())
     print("Starting test (after training)")
     warmup_trainer.test(ner_model,dataloaders=dm.test_dataloader())
     
     print("Starting test (concatentaion)")
-    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+    dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
                                 num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
     ner_model=Ablat_HAC_full_encoder(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr,ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric,
                                flat=flat)
@@ -164,7 +158,7 @@ if __name__ == '__main__':
     
     
     print("Starting test (last layer)")
-    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+    dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
                                 num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
     ner_model=Ablat_HAC_last_encoder(transformer_model, classes=dm.class_label_obj, tokenizer=tokenizer,lr=args.lr,ls_hidden_size=128, distance_fn=distance_fn, hac_metric=hac_metric,
                                flat=flat)

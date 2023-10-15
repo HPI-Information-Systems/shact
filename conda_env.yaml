@@ -1,4 +1,4 @@
-name: ls_hac
+name: shact
 channels:
   - pytorch
   - huggingface

@@ -4,15 +4,12 @@ from typing import List, Tuple
 from inference_model import LSHAC_NER_Prediction
 import pytorch_lightning as pl
 from tqdm import tqdm
-from model import LSHAC_FlatNERModel, LSHAC_NERModel, LSHAC_NestedNERModel
+from model import SHACT_NestedModel
 from transformers import AutoTokenizer,AutoModel,AutoConfig
-from pytorch_lightning.loggers import WandbLogger
 import torch
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 import os
 from argparse import ArgumentParser,ArgumentDefaultsHelpFormatter
-from data_modules import HFNer_DataModule, HFNestedNer_DataModule, include_special_tokens, get_tag_format
+from data_modules import HFNested_DataModule, include_special_tokens
 from datasets import load_dataset
 import wandb
 from dotenv import dotenv_values
@@ -49,7 +46,7 @@ def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,
 
 if __name__ == '__main__':
     env_config = dotenv_values(".env")
-    out_folder=env_config["LSHAC_NER_OUTPUT_DIR"]
+    out_folder=env_config["SHACT_OUTPUT_DIR"]
     use_wandb=(env_config["WANDB"] is None) or env_config["WANDB"]=="True"
     wandb_project=env_config["WANDB_PROJECT"]
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
@@ -58,23 +55,17 @@ if __name__ == '__main__':
     parser.add_argument("--seed", default=42, type=int, help="Seed for reproducibility")
     parser.add_argument("--workers", default=min(os.cpu_count(),64), type=int, help="Number of dataloader workers")
     parser.add_argument("--use_test", action="store_true", help="Use the test split. Should only be used for the final evaluation")
-    #parser.add_argument("--clean", action="store_true", help="Delete the images in the wandb run before uploading new ones")
     parser.add_argument("--tree_type", default="errors", type=str, choices=["all","errors","none"] , help="Which trees to generate")
     parser.add_argument("--save_predictions", action="store_true", help="Save predicted results in a file")
     parser.add_argument("--limit", type=int, help="Number batches to predict. Useful for debugging")
-    #parser = pl.Trainer.add_argparse_args(parser)
-    #parser.set_defaults(accelerator="gpu",devices=1,max_epochs=300)
     args = parser.parse_args()
-    #print args to stdout
     print("Arguments:")
     for k,v in vars(args).items():
         print(f"{k}: {v}")
     pl.seed_everything(args.seed)
     logger=False
-    #if use_wandb:
     api = wandb.Api()
     run = api.run(args.run_path)
-    #wandb.init(id=run.id, project=wandb_project , resume="must")
     old_config=run.config
     #delet limit keys
     for k in ["limit_test_batches"]:
@@ -87,8 +78,6 @@ if __name__ == '__main__':
     old_args.accelerator="gpu"
     old_args.devices=1
     print("Reusing old config: ",old_args)
-    #sys.exit(0)
-    #api = wandb.Api()
     task_config_file = run.config["task_config"]
     task_config_file=Path(task_config_file)
     if not task_config_file.exists():
@@ -129,9 +118,9 @@ if __name__ == '__main__':
     data_adapter_fn=getattr(da,old_args.data_adapter)
     hf_dataset=data_adapter_fn(hf_dataset)
 
-    dm = HFNestedNer_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
+    dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
                                 num_workers=args.workers, limit_samples=0)#, test_batch_size=args.batch_size)
-    model_class = LSHAC_NestedNERModel
+    model_class = SHACT_NestedModel
     
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
@@ -140,7 +129,7 @@ if __name__ == '__main__':
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
         ckpt=os.path.join(ckpt_dir,ckpt[-1])
-        ner_model = LSHAC_NestedNERModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer, flat=flat)
+        ner_model = SHACT_NestedModel.load_from_checkpoint(checkpoint_path=ckpt,transformer_model=transformers_model, classes=dm.class_label_obj, neg_sample_size=1, tokenizer=tokenizer, flat=flat)
     else:
         print("No checkpoint found")
         exit(1)
