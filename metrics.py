@@ -1,5 +1,5 @@
 from evaluate.info import EvaluationModuleInfo
-from inference_model import LSHAC_NER_Prediction
+from inference_model import SHACT_Prediction
 from typing import List, Tuple
 from evaluate import Metric
 
@@ -14,7 +14,7 @@ class NestedNERMetric():
         self.types=types
         self.flat=flat
 
-    def compute(self, predictions:List[LSHAC_NER_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int,int]]]=None,zero_division=0) -> dict | None:
+    def compute(self, predictions:List[SHACT_Prediction]=None, references:List[List[Tuple[Tuple[int,int],int,int]]]=None,zero_division=0) -> dict | None:
         """
         Computes F1, precision and recall for nested NER
         """

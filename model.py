@@ -15,7 +15,7 @@ from latent_space import hac_sl_ratio_loss
 import utils
 import evaluate
 from pytorch_lightning.loggers.wandb import WandbLogger
-from inference_model import LSHAC_NER_Prediction
+from inference_model import SHACT_Prediction
 from metrics import NestedNERMetric
 from multiprocessing import Pool
 
@@ -344,7 +344,7 @@ class SHAC_BaseModel(pl.LightningModule):
         self.log("losses/train_loss",loss)
         return loss
     
-    def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+    def compute_results(self, batch, prediction_objs:List[SHACT_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
         Computes the predicted and ground truth labels in the IOB format
         batch: batch of data. Used for getting the ground truth labels
@@ -462,7 +462,7 @@ class SHAC_BaseModel(pl.LightningModule):
         _,clusters,logits=self._forward_senteces(batch["inputs"],all_word_ids)
         return clusters,logits
     
-    def predict(self, batch) -> Tuple[List[LSHAC_NER_Prediction], Any]:
+    def predict(self, batch) -> Tuple[List[SHACT_Prediction], Any]:
         """
         
         """
@@ -473,7 +473,7 @@ class SHAC_BaseModel(pl.LightningModule):
         predictions = []
         for (sentence_clusters,cluster_logits,sentence_mask,word_ids_t) in zip(clusters,logits,sentence_masks,all_word_ids):
             word_ids=word_ids_t[sentence_mask==1].tolist()
-            predictions.append(LSHAC_NER_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask,word_ids=word_ids))
+            predictions.append(SHACT_Prediction(sentence_clusters,cluster_logits,self.types,sentence_mask,word_ids=word_ids))
         ret_batch=batch
         if self.warmup:
             #return ids as a list
@@ -512,7 +512,7 @@ class SHACT_NestedModel(SHAC_BaseModel):
         self.flat=flat
         self.metric=NestedNERMetric(self.types, flat=flat)
 
-    def compute_results(self, batch, prediction_objs:List[LSHAC_NER_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
+    def compute_results(self, batch, prediction_objs:List[SHACT_Prediction]) -> Tuple[List[List[str]],List[List[str]]]:
         """
         Computes the predicted and ground truth spans
         batch: batch of data. Used for getting the ground truth labels

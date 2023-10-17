@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from typing import List, Tuple
-from inference_model import LSHAC_NER_Prediction
+from inference_model import SHACT_Prediction
 import pytorch_lightning as pl
 from tqdm import tqdm
 from model import SHACT_NestedModel
@@ -19,7 +19,7 @@ import re
 import data_adapters as da
 import configparser
 
-def is_perfect_prediction(prediction:LSHAC_NER_Prediction,gt:List[Tuple[int,int,str]], flat:bool=False)->bool:
+def is_perfect_prediction(prediction:SHACT_Prediction,gt:List[Tuple[int,int,str]], flat:bool=False)->bool:
     """
     Checks if the prediction is perfect
     """

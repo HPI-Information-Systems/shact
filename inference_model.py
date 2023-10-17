@@ -2,7 +2,7 @@ from typing import Dict, List, Tuple
 import torch
 import pydot
 
-class LSHAC_NER_Prediction():
+class SHACT_Prediction():
     #class with clusters and types for each cluster fro a single sentence
     def __init__(self,clusters:List[Tuple[int,int]],logits:List[torch.Tensor],types_list:List[str],sentence_mask:torch.Tensor, word_ids:List[int]=None):
         assert len(sentence_mask.shape)==1, "sentence_mask must be a 1D tensor. results are designed for a single sentence"
