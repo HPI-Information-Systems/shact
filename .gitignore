@@ -4,3 +4,6 @@
 *.code-workspace
 *slurm-*.out
 wandb/*
+slurm_logs/*
+slurm_scripts/*
+local_datasets/*

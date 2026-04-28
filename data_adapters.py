@@ -135,6 +135,83 @@ def convert_genia_dataset(source_dataset: DatasetDict) -> DatasetDict:
         target_dataset[split]=target_dataset[split].cast(features)
     return target_dataset.filter(lambda example: len(example["tokens"])>0)
 
+
+def convert_art_dataset(source_dataset: DatasetDict) -> DatasetDict:
+    """
+    Each element is of the following format:
+    {'text': '26 still-life with a delft vase of carnations and other flowers,\noil on canvas, signed with initials h.e.b., unframed, 13in.',
+ 'tokens': ['26',
+  'still',
+  '-',
+  'life',
+  'with',
+  'a',
+  'delft',
+  'vase',
+  'of',
+  'carnations',
+  'and',
+  'other',
+  'flowers',
+  ',',
+  '\n',
+  'oil',
+  'on',
+  'canvas',
+  ',',
+  'signed',
+  'with',
+  'initials',
+  'h.e.b',
+  '.',
+  ',',
+  'unframed',
+  ',',
+  '13',
+  'in',
+  '.'],
+ 'entities': [{'start_token': 15, 'end_token': 18, 'label': 'TITLE'}]}
+    """
+    target_dataset=DatasetDict()
+    entity_types=["O"]
+    all_entities=source_dataset["train"]["entities"]
+    #build a set of all entity types efficiently
+    for entities in all_entities:
+        for entity in entities:
+            if entity["label"] not in entity_types:
+                entity_types.append(entity["label"])
+    #build ClassLabel from entity types
+    class_label_obj: ClassLabel = ClassLabel(names=list(entity_types))
+    split_sizes=[len(source_dataset["train"]),len(source_dataset["validation"]),len(source_dataset["test"])]
+    #cumulative sum
+    split_sizes=[sum(split_sizes[:i+1]) for i in range(len(split_sizes))]
+    #build an id column for each split
+    #get the ranges
+    init=[0]+split_sizes[:-1]
+    ranges=[range(init[i],split_sizes[i]) for i in range(len(split_sizes))]
+    #build the id column
+    for i,split in enumerate(["train","validation","test"]):
+        target_dataset[split]=source_dataset[split].add_column("id",[str(i) for i in ranges[i]])
+    def map_entity(all_entities:List[List[dict]]):
+        all_spans=[]
+        for entities in all_entities:
+            spans=[]
+            for entity in entities:
+                spans.append({"start":entity["start_token"], "end":entity["end_token"], "label":class_label_obj.str2int(entity["label"])})
+            all_spans.append(spans)
+        return all_spans
+    def map_batch(batch):
+        return {"id": batch["id"], "tokens": batch["tokens"], "spans": map_entity(batch["entities"])}
+    for split in ["train","validation","test"]:
+        #build the spans column using map
+        columns_to_remove = [col for col in source_dataset["train"].column_names if col not in ["id", "tokens", "spans"]]
+        target_dataset[split]=target_dataset[split].map(map_batch,batched=True, remove_columns=columns_to_remove,
+            desc="Mapping to normalized format", keep_in_memory=True,)
+        features=target_dataset[split].features.copy()
+        features["spans"]=[{"start": Value(dtype="int32"), "end": Value(dtype="int32"), "label": class_label_obj}]
+        target_dataset[split]=target_dataset[split].cast(features)
+    return target_dataset
+
 def pre_process_ontonotes(source_dataset: DatasetDict) -> DatasetDict:
     def map_doc_batch(batch: Dict[str, List]) -> Dict[str, List]:
         new_batch = {"id": [], "sentence": []}

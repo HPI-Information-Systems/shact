@@ -82,7 +82,7 @@ class HFNestedSpanDataset(Dataset):
             all_words.append(tokens)
             all_spans.append(span)
             all_types.append(type)
-        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True,truncation=True)
         for ii,(min,max) in enumerate(all_spans):
             words_ids=inputs.word_ids(ii)
             words_ids_pad=[-1 if x is None else x for x in words_ids]
