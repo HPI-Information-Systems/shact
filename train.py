@@ -124,7 +124,7 @@ if __name__ == '__main__':
     assert args.undersample_rate is None or (args.undersample_rate<=1.0 and args.undersample_rate>=0,0)
 
     dm = HFNested_DataModule(hf_dataset, tokenizer=tokenizer, batch_size=args.batch_size,
-                                num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size)
+                                num_workers=args.workers, limit_samples=args.limit_samples, test_batch_size=args.test_batch_size, undersample_rate=args.undersample_rate)
     model_class = SHACT_NestedModel
 
     distance_fn = cosine_distance if args.distance == "cosine" else torch.cdist

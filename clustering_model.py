@@ -12,6 +12,7 @@ def get_word_spans(word_ids:List[int]) -> List[Set[int]]:
     for j in range(max_word_id+1):
         indices=np.argwhere(word_ids_np==j).squeeze(-1)
         if indices.shape[0]==0:
+            extra_spans.append(set())
             continue
         min=indices.min().item()
         max=indices.max().item()

@@ -30,6 +30,7 @@ class HFNestedSpanDataset(Dataset):
         raw_data=hf_examples
         self.feature_name=feature_name
         self.tokenizer=tokenizer
+        self.model_max_length=tokenizer.model_max_length
         self.limit_samples=limit_samples
         self.sentences=self._broadcast_sentences_spans(raw_data,span_generator_fn)
     
@@ -82,7 +83,7 @@ class HFNestedSpanDataset(Dataset):
             all_words.append(tokens)
             all_spans.append(span)
             all_types.append(type)
-        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True,truncation=True)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True,truncation=True, max_length=self.model_max_length-2)
         for ii,(min,max) in enumerate(all_spans):
             words_ids=inputs.word_ids(ii)
             words_ids_pad=[-1 if x is None else x for x in words_ids]
@@ -99,6 +100,7 @@ class HFNestedSentenceDataset(Dataset):
         self.raw_data=hf_examples
         self.feature_name=feature_name
         self.tokenizer=tokenizer
+        self.model_max_length=tokenizer.model_max_length
         self.types:ClassLabel=hf_examples.features[feature_name][0]["label"]
 
     def __len__(self):
@@ -126,7 +128,7 @@ class HFNestedSentenceDataset(Dataset):
                 entities_w_spans.append((span_s,span_e-1,type))
             all_entity_w_spans.append(entities_w_spans)
 
-        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True)
+        inputs=self.tokenizer(all_words,return_tensors="pt",is_split_into_words=True,padding=True,return_attention_mask=True,add_special_tokens=False,return_special_tokens_mask=True,truncation=True, max_length=self.model_max_length-2)
         seq_len=inputs.input_ids.shape[1]
 
         all_masks=[]
