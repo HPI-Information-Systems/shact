@@ -135,12 +135,14 @@ class SHAC_BaseModel(pl.LightningModule):
             all_predicted_clusters=p.starmap(compute_clusters_thread,zip(all_clustering_models,all_token_ls_vectors,all_word_id_lists))
         for predicted_clusters,token_indices,word_id_list in zip(all_predicted_clusters,all_token_indices,all_word_id_lists):
             spans_set=set()
+            word_spans=get_word_spans(word_id_list)
             for cluster in predicted_clusters:
                 cluster_as_token_indices=[]
-                word_spans=get_word_spans(word_id_list)
                 for ix in cluster:
                     cluster_as_token_indices.extend(list(word_spans[ix]))
                 cluster_indices=token_indices[list(cluster_as_token_indices)].cpu().numpy()
+                if cluster_indices.shape[0]==0:
+                    continue
                 min_ix=cluster_indices.min()
                 max_ix=cluster_indices.max()
                 spans_set.add((min_ix,max_ix))
