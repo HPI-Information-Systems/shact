@@ -124,7 +124,7 @@ if __name__ == '__main__':
     
     run_spl=args.run_path.split("/")
     assert len(run_spl)==3
-    ckpt_dir=os.path.join(save_dir,run_spl[1],run_spl[2],"checkpoints")
+    ckpt_dir=os.path.join(save_dir,run_spl[0],run_spl[2],"checkpoints")
     if os.path.exists(ckpt_dir):
         ckpt=[f for f in os.listdir(ckpt_dir) if f.endswith(".ckpt")]
         assert len(ckpt)>=0
